@@ -32,6 +32,14 @@ const DIAG_ARROWS = [
 ];
 const DIAG_ARROW_CELLS = new Set(DIAG_ARROWS.map(d => `${d.r},${d.c}`));
 
+// Клетки-входы на маршрут (откуда фишки выходят из дома) — белые, как кончики лучей.
+const ENTRY_CELLS = new Set([
+  '3,10',   // верх  — средний ряд луча, у кончика
+  '17,10',  // низ
+  '10,3',   // лево
+  '10,17',  // право
+]);
+
 // nx/ny — направление сдвига наружу (от прилегающей клетки луча креста),
 // чтобы увеличенный кружок не наезжал на соседа.
 const BM_CELLS = [
@@ -97,7 +105,7 @@ function inCross(r, c) {
 function boardPx(c) { return MARGIN + OFF + c * SP + R; }
 function boardPy(r) { return MARGIN + OFF + r * SP + R; }
 
-function drawCircle(ctx, x, y, label, bm, rad = R) {
+function drawCircle(ctx, x, y, label, white, rad = R) {
   ctx.beginPath();
   ctx.arc(x, y, rad + 2, 0, Math.PI * 2);
   ctx.fillStyle = activeTheme.ring;
@@ -105,7 +113,7 @@ function drawCircle(ctx, x, y, label, bm, rad = R) {
 
   ctx.beginPath();
   ctx.arc(x, y, rad, 0, Math.PI * 2);
-  ctx.fillStyle = bm ? '#ffffff' : activeTheme.cell;  // БМ — чисто белый фон
+  ctx.fillStyle = white ? '#ffffff' : activeTheme.cell;  // белая заливка (БМ и входы в дом)
   ctx.fill();
   ctx.strokeStyle = activeTheme.cellStroke;
   ctx.lineWidth = 1;
@@ -264,7 +272,7 @@ function drawBoard(canvas) {
       if (ARROW_CELLS.has(key)) continue;
       if (DIAG_ARROW_CELLS.has(key)) continue;
       if (inCross(r, c)) {
-        drawCircle(ctx, boardPx(c), boardPy(r), ROMAN_CELLS[key] || '', false);
+        drawCircle(ctx, boardPx(c), boardPy(r), ROMAN_CELLS[key] || '', ENTRY_CELLS.has(key));
       }
     }
   }
@@ -278,11 +286,11 @@ function drawBoard(canvas) {
     drawCircle(ctx, boardPx(c) + nx * ENDGAP, boardPy(r) + ny * ENDGAP, 'БМ', true, ENDR);
   });
 
-  // Одиночки (концы лучей креста) — рисуем крупнее остальных.
-  drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, '', false, ENDR);  // верх
-  drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, '', false, ENDR);  // низ
-  drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Л', false, ENDR); // лево
-  drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'В', false, ENDR); // право
+  // Одиночки (концы лучей, напротив римской I) — входы в дом, белые и крупнее.
+  drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, '', true, ENDR);  // верх
+  drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, '', true, ENDR);  // низ
+  drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Л', true, ENDR); // лево
+  drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'В', true, ENDR); // право
 
   // Стрелки
   drawArrow(ctx, boardPx(centerC),   boardPy(centerR-1), Math.PI);

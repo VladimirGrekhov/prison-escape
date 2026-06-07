@@ -20,6 +20,7 @@ function init() {
   document.getElementById('d1').onclick = onRollClick;
   document.getElementById('d2').onclick = onRollClick;
   document.getElementById('theme-btn').onclick = toggleTheme;
+  setupRules();
 
   const resetBtn = document.getElementById('reset-btn');
   if (resetBtn) resetBtn.onclick = () => { if (window.MP && MP.enabled) MP.reset(); };
@@ -34,6 +35,26 @@ function init() {
   // offline (hot-seat on one device), exactly like before.
   if (window.MP) MP.connect();
   refreshControls();
+}
+
+/* ----------------------------- rules modal ----------------------------- */
+
+function setupRules() {
+  const btn = document.getElementById('rules-btn');
+  const overlay = document.getElementById('rules-overlay');
+  const close = document.getElementById('rules-close');
+  if (!btn || !overlay) return;
+
+  const open = () => overlay.classList.remove('hidden');
+  const hide = () => overlay.classList.add('hidden');
+
+  btn.onclick = open;
+  if (close) close.onclick = hide;
+  // Клик по затемнённому фону (но не по самому окну) закрывает.
+  overlay.onclick = (e) => { if (e.target === overlay) hide(); };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !overlay.classList.contains('hidden')) hide();
+  });
 }
 
 /* ----------------------------- theme ----------------------------- */
