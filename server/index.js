@@ -167,3 +167,33 @@ const gameServer = new Server();
 gameServer.define("prison", GameRoom);
 gameServer.listen(port, host);
 console.log(`Prison Escape multiplayer listening on ws://${host}:${port}`);
+
+// ---- Debug log sink ------------------------------------------------------
+// Клиент (?debug=1) шлёт строки лога сюда POST-ом, сервер дописывает их в файл
+// logs/client.log (папка добавлена в ReadWritePaths systemd-юнита).
+const http = require("http");
+const fs = require("fs");
+const path = require("path");
+const LOG_PORT = Number(process.env.LOG_PORT) || 2568;
+const LOG_FILE = path.join(__dirname, "logs", "client.log");
+const MAX_BODY = 64 * 1024;          // ограничение тела запроса
+const MAX_FILE = 5 * 1024 * 1024;    // простая ротация при превышении
+
+http.createServer((req, res) => {
+  if (req.method !== "POST") { res.writeHead(405); return res.end(); }
+  let body = "", aborted = false;
+  req.on("data", (chunk) => {
+    body += chunk;
+    if (body.length > MAX_BODY) { aborted = true; req.destroy(); }
+  });
+  req.on("end", () => {
+    if (aborted) return;
+    try {
+      if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > MAX_FILE) {
+        fs.writeFileSync(LOG_FILE, "");
+      }
+      fs.appendFileSync(LOG_FILE, body.replace(/\s+$/, "") + "\n");
+    } catch (e) { /* ignore */ }
+    res.writeHead(204); res.end();
+  });
+}).listen(LOG_PORT, host, () => console.log(`Log sink on http://${host}:${LOG_PORT}`));

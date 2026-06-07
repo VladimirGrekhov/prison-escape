@@ -6,16 +6,15 @@
   const SEATS = 4;
   const PER_SEAT = 5;
 
-  // [row, col] клетки по «прогрессу» фишки. progress 0 = кружок «Х» (старт),
-  // 1..TRACK_MAIN — петля, далее — домашняя дорожка.
+  // [row, col] клетки по «прогрессу» фишки. progress 0 = вход (рисуется на «Х»),
+  // далее по петле, затем — домашняя дорожка. Ход на N кубика = вход+N.
   function cellForProgress(seat, progress) {
-    if (progress <= 0) return X_GRID[seat];     // стоит на «Х»
-    const onTrack = progress - 1;
-    if (onTrack < TRACK_MAIN) {
-      return TRACK[(ENTRY[seat] + onTrack) % TRACK.length];
+    if (progress < 0) return null;
+    if (progress < TRACK_MAIN) {
+      return TRACK[(ENTRY[seat] + progress) % TRACK.length];
     }
     const lane = HOME_LANE[seat];
-    const laneIdx = onTrack - TRACK_MAIN;
+    const laneIdx = progress - TRACK_MAIN;
     return laneIdx < lane.length ? lane[laneIdx] : null;
   }
 
@@ -28,23 +27,27 @@
       this.pieces = [];
       for (let s = 0; s < SEATS; s++) {
         const row = [];
-        for (let i = 0; i < PER_SEAT; i++) row.push({ where: 'prison', progress: 0 });
+        for (let i = 0; i < PER_SEAT; i++) row.push({ where: 'prison', progress: 0, bm: false });
         this.pieces.push(row);
       }
     },
 
-    // Клетка [r,c] фишки, либо null (в тюрьме / дома).
+    // Клетка [r,c] фишки, либо null (в тюрьме / дома). Фишка «на БМ» стоит в кармане.
     cellOf(seat, i) {
       const p = this.pieces[seat][i];
       if (p.where === 'prison' || p.where === 'home') return null;
+      if (p.bm) {
+        const b = BM_BY_TRACK[(ENTRY[seat] + p.progress) % TRACK.length];
+        if (b) return [b.r, b.c];
+      }
       return cellForProgress(seat, p.progress);
     },
 
-    // Индекс клетки в TRACK (или -1, если фишка на «Х» / не на петле).
+    // Индекс клетки в TRACK (или -1, если фишка не на петле).
     trackIndex(seat, i) {
       const p = this.pieces[seat][i];
-      if (p.where !== 'track' || p.progress < 1) return -1;
-      return (ENTRY[seat] + p.progress - 1) % TRACK.length;
+      if (p.where !== 'track') return -1;
+      return (ENTRY[seat] + p.progress) % TRACK.length;
     },
 
     // Фишки на клетке [r,c] (только на маршруте/дорожке), кроме указанной.
@@ -86,12 +89,10 @@
           continue;
         }
         if (p.progress + die > MAX_PROGRESS) continue; // нужно точное число для дома
-        if (p.where === 'track' && p.progress >= 1) {
-          const ti = this.trackIndex(seat, i);
-          const [r, c] = TRACK[ti];
-          if (this.isSafeCell(r, c) && this.opponentAdjacentOnTrack(seat, ti) && !ctx.doubleOne) {
-            continue; // заблокирован у БМ (снимается дублем 1)
-          }
+        // Блокировка БМ: стоишь на БМ и рядом противник — выйти нельзя (кроме дубля 1).
+        if (p.bm) {
+          const ti = (ENTRY[seat] + p.progress) % TRACK.length;
+          if (this.opponentAdjacentOnTrack(seat, ti) && !ctx.doubleOne) continue;
         }
         out.push(i);
       }
@@ -109,13 +110,14 @@
       } else {
         p.progress += die;
       }
+      p.bm = false; // сходя, фишка возвращается с БМ на маршрут
 
       if (p.progress >= MAX_PROGRESS) {
         p.where = 'home';
         res.finished = true;
         return res;
       }
-      p.where = p.progress <= TRACK_MAIN ? 'track' : 'lane';
+      p.where = p.progress < TRACK_MAIN ? 'track' : 'lane';
 
       // Захват: только на небезопасной клетке петли.
       if (p.where === 'track') {
@@ -131,6 +133,15 @@
       }
       return res;
     },
+
+    // Можно ли фишке предложить съезд на БМ (стоит на маршруте напротив БМ).
+    canOfferBM(seat, i) {
+      const p = this.pieces[seat][i];
+      if (p.where !== 'track' || p.bm) return false;
+      return !!BM_BY_TRACK[(ENTRY[seat] + p.progress) % TRACK.length];
+    },
+
+    divertToBM(seat, i) { this.pieces[seat][i].bm = true; },
 
     hasAnyMove(seat, dice, ctx) {
       return dice.some(d => this.legalForDie(seat, d, ctx).length > 0);

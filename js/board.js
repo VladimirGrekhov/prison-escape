@@ -82,8 +82,8 @@ const HOME_LANE = [
 
 const TRACK_MAIN = TRACK.length;        // длина петли
 const LANE_LEN = HOME_LANE[0].length;   // длина домашней дорожки (включая центр)
-// progress 0 = кружок «Х» (старт после выхода); 1..TRACK_MAIN — петля; далее дорожка.
-const MAX_PROGRESS = TRACK_MAIN + LANE_LEN; // точное число для финиша (центр)
+// progress 0 = вход (рисуется на «Х»); далее петля; затем домашняя дорожка.
+const MAX_PROGRESS = TRACK_MAIN + LANE_LEN - 1; // точное число для финиша (центр)
 
 // Кружок «Х» (вход в дом) каждого места — стартовая позиция после выхода (progress 0).
 const X_GRID = [
@@ -115,6 +115,20 @@ const BM_CELLS = [
   {r:6,  c:8,  nx:-1, ny:0},  {r:6,  c:12, nx:1,  ny:0},
   {r:14, c:8,  nx:-1, ny:0},  {r:14, c:12, nx:1,  ny:0},
 ];
+
+// Сопоставление БМ ↔ соседняя клетка маршрута (для съезда «на БМ»).
+const BM_BY_TRACK = {};
+BM_CELLS.forEach((b) => {
+  [[b.r-1, b.c], [b.r+1, b.c], [b.r, b.c-1], [b.r, b.c+1]].forEach(([r, c]) => {
+    const idx = trackIndexOf(r, c);
+    if (idx >= 0) BM_BY_TRACK[idx] = b;
+  });
+});
+BM_CELLS.forEach((b) => SAFE.add(`${b.r},${b.c}`)); // карманы БМ безопасны
+function bmCenter(b) {
+  const g = R * 0.45;
+  return { x: boardPx(b.c) + b.nx * g, y: boardPy(b.r) + b.ny * g };
+}
 
 // Палитры доски (canvas) для дневной и ночной темы.
 const THEMES = {
@@ -428,30 +442,63 @@ function drawBoard(canvas) {
 
   // Фишки на маршруте/в дорожке (только в офлайн-режиме движка).
   if (engineMode) drawTrackPieces(ctx, movable);
+
+  drawDebug(ctx);
+}
+
+// Отладочная нумерация клеток (включается ?debug=1). Подписи смещены в угол
+// клетки, чтобы не перекрываться фишками.
+function drawDebug(ctx) {
+  if (!(window.DBG && DBG.enabled)) return;
+  ctx.save();
+  ctx.font = `bold ${Math.round(R * 0.5)}px sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const put = (x, y, txt, color) => {
+    ctx.fillStyle = color;
+    ctx.fillText(txt, x - R * 0.9, y - R * 0.9);
+  };
+  TRACK.forEach(([r, c], idx) => { const p = cellCenter(r, c); put(p.x, p.y, String(idx), '#b00020'); });
+  HOME_LANE.forEach((lane, s) => lane.forEach(([r, c], k) => {
+    const p = cellCenter(r, c); put(p.x, p.y, `h${s}.${k}`, '#0050c0');
+  }));
+  for (let s = 0; s < 4; s++) { const p = xCenter(s); put(p.x, p.y, `x${s}`, '#006400'); }
+  BM_CELLS.forEach((b, n) => {
+    const p = cellCenter(b.r, b.c);
+    put(p.x + b.nx * R * 0.45, p.y + b.ny * R * 0.45, `бм${n}`, '#7a4a00');
+  });
+  const cp = cellCenter(centerR, centerC); put(cp.x, cp.y, 'ц', '#ffffff');
+  ctx.restore();
 }
 
 // Рисует все фишки, вышедшие из тюрьмы, на их клетках. Несколько фишек на одной
 // клетке слегка раздвигаются. Заполняет __pieceHits для попадания клика.
 function drawTrackPieces(ctx, movable) {
-  const PR = R * 0.8;                 // фишка чуть меньше клетки
-  const groups = {};                 // "x,y" -> { x, y, list:[{seat,i}] }
+  const groups = {};                 // "x,y" -> { x, y, list:[{seat,i}], onX }
   for (let s = 0; s < ENGINE.SEATS; s++) {
     for (let i = 0; i < ENGINE.PER_SEAT; i++) {
       const p = ENGINE.pieces[s][i];
       if (p.where === 'prison' || p.where === 'home') continue;
-      let pos;
-      if (p.where === 'track' && p.progress === 0) {
-        pos = xCenter(s);            // стоит на кружке «Х»
+      const onX = (p.where === 'track' && p.progress === 0); // стоит на кружке «Х»
+      let pos, big = onX;
+      if (onX) {
+        pos = xCenter(s);
+      } else if (p.bm) {
+        const b = BM_BY_TRACK[ENGINE.trackIndex(s, i)];
+        pos = b ? bmCenter(b) : cellCenter(...ENGINE.cellOf(s, i));
+        big = true;                            // БМ-кружок крупный
       } else {
         const cell = ENGINE.cellOf(s, i);
         if (!cell) continue;
         pos = cellCenter(cell[0], cell[1]);
       }
       const key = `${Math.round(pos.x)},${Math.round(pos.y)}`;
-      (groups[key] || (groups[key] = { x: pos.x, y: pos.y, list: [] })).list.push({ seat: s, i });
+      (groups[key] || (groups[key] = { x: pos.x, y: pos.y, list: [], big })).list.push({ seat: s, i });
     }
   }
   Object.values(groups).forEach((g) => {
+    const PR = g.big ? R * 1.05 : R * 0.8;     // на «Х»/БМ фишка крупнее (заметнее)
+    const hitR = g.big ? R * 1.45 : R * 1.1;   // и кликается во весь кружок
     g.list.forEach((p, n) => {
       // лёгкое раздвижение при наложении нескольких фишек
       const ang = g.list.length > 1 ? (n / g.list.length) * Math.PI * 2 : 0;
@@ -460,7 +507,7 @@ function drawTrackPieces(ctx, movable) {
       const py = g.y + Math.sin(ang) * rad;
       const hl = movable && movable.has(`${p.seat},${p.i}`);
       drawPiece(ctx, px, py, PLAYERS[p.seat].color, PR, hl);
-      __pieceHits.push({ seat: p.seat, i: p.i, x: px, y: py, r: PR + 4 });
+      __pieceHits.push({ seat: p.seat, i: p.i, x: px, y: py, r: hitR });
     });
   });
 }

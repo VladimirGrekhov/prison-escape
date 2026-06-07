@@ -160,6 +160,59 @@ body {
   box-shadow: 0 0 12px var(--btn-hover);
 }
 
+/* Spent die (its value has been used this turn). */
+.die.die-used {
+  opacity: 0.3;
+  filter: grayscale(1);
+  cursor: default;
+  position: relative;
+}
+.die.die-used::after {
+  content: '✓';
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  font-size: 16px;
+  color: var(--btn-text);
+  background: var(--btn-bg);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Prompt: divert to БМ or stay. */
+#bm-prompt {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 14px;
+  border-radius: 14px;
+  background: var(--status-bg);
+  color: var(--status-text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#bm-prompt.hidden { display: none; }
+
+#bm-prompt button {
+  padding: 7px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  transition: background 0.15s, transform 0.1s;
+}
+
+#bm-prompt button:hover  { background: var(--btn-hover); }
+#bm-prompt button:active { transform: scale(0.96); }
+
 /* Multiplayer status + controls bar. */
 #mp-bar {
   display: flex;
@@ -178,7 +231,7 @@ body {
   transition: background 0.3s, color 0.3s;
 }
 
-#mode-btn {
+#mode-btn, #log-btn {
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 600;
@@ -190,8 +243,8 @@ body {
   transition: background 0.15s, transform 0.1s;
 }
 
-#mode-btn:hover  { background: var(--btn-hover); }
-#mode-btn:active { transform: scale(0.96); }
+#mode-btn:hover,  #log-btn:hover  { background: var(--btn-hover); }
+#mode-btn:active, #log-btn:active { transform: scale(0.96); }
 
 #mp-controls {
   display: none; /* shown by net.js only when online */

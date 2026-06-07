@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=20">
+  <link rel="stylesheet" href="css/style.css?v=26">
 </head>
 <body>
 
@@ -29,9 +29,16 @@
     <div id="total">Сумма: —</div>
     <div id="status">Ход игрока 1</div>
 
+    <div id="bm-prompt" class="hidden">
+      <span>🛡 Ход напротив БМ:</span>
+      <button id="bm-yes">Съехать на БМ</button>
+      <button id="bm-no">Остаться</button>
+    </div>
+
     <div id="mp-bar">
       <span id="mp-status">🔌 Локальная игра</span>
       <button id="mode-btn">🔌 Играть локально</button>
+      <button id="log-btn" style="display:none">⬇ Лог</button>
       <div id="mp-controls">
         <input id="name-input" type="text" maxlength="16" placeholder="Ваше имя" />
         <button id="reset-btn" title="Начать заново">↺ Сброс</button>
@@ -83,12 +90,13 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=20"></script>
-  <script src="js/board.js?v=20"></script>
-  <script src="js/engine.js?v=20"></script>
-  <script src="js/sound.js?v=20"></script>
-  <script src="js/game.js?v=20"></script>
-  <script src="js/net.js?v=20"></script>
+  <script src="js/colyseus.js?v=26"></script>
+  <script src="js/board.js?v=26"></script>
+  <script src="js/engine.js?v=26"></script>
+  <script src="js/debug.js?v=26"></script>
+  <script src="js/sound.js?v=26"></script>
+  <script src="js/game.js?v=26"></script>
+  <script src="js/net.js?v=26"></script>
 
 </body>
 </html>

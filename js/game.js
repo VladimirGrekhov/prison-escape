@@ -7,12 +7,14 @@ let rolling = false;     // local dice-animation lock
 let diceVals = [1, 1];
 
 // Офлайн-движок: состояние текущего хода.
-let pending = [];        // оставшиеся значения кубиков
-let selectedDie = -1;    // индекс выбранного кубика в pending
+let dice = [];                 // [v1, v2] — выпавшие значения (фиксированные слоты d1/d2)
+let used = [false, false];     // какой кубик уже израсходован
+let selectedDie = -1;          // индекс выбранного кубика (0/1)
 let awaitingMove = false;
 let turnDouble = false;
 let doubleOne = false;
 let gameOver = false;
+let bmChoice = null;           // {seat,i} — ждём выбор «съехать на БМ или остаться»
 
 function rnd() { return 1 + Math.floor(Math.random() * 6); }
 
@@ -30,8 +32,14 @@ function init() {
   document.getElementById('theme-btn').onclick = toggleTheme;
   setupRules();
   setupModeToggle();
+  if (window.DBG) DBG.init();
   setupBoardInput(canvas);
   window.onBoardClick = onBoardClick;
+
+  const bmYes = document.getElementById('bm-yes');
+  const bmNo = document.getElementById('bm-no');
+  if (bmYes) bmYes.onclick = () => resolveBM(true);
+  if (bmNo) bmNo.onclick = () => resolveBM(false);
 
   const resetBtn = document.getElementById('reset-btn');
   if (resetBtn) resetBtn.onclick = onResetClick;
@@ -121,7 +129,7 @@ function toggleTheme() {
 const isOnline = () => !!(window.MP && MP.enabled);
 
 function onRollClick() {
-  if (rolling) return;
+  if (rolling || bmChoice) return;
 
   if (isOnline()) {
     // Only the seat whose turn it is may roll. The server is authoritative and
@@ -139,6 +147,7 @@ function onRollClick() {
 
 // Клик по кубику: в фазе хода (офлайн) — выбор кубика; иначе — бросок.
 function onDieClick(idx) {
+  if (bmChoice) return;
   if (!isOnline() && awaitingMove) { selectDie(idx); return; }
   onRollClick();
 }
@@ -146,85 +155,130 @@ function onDieClick(idx) {
 /* --------------------- offline move phase (full rules) --------------------- */
 
 function startMovePhase(a, b) {
-  pending = [a, b];
+  dice = [a, b];
+  used = [false, false];
   turnDouble = (a === b);
   doubleOne = (a === 1 && b === 1);
+  if (window.DBG) DBG.log(`--- roll seat${currentPlayer} [${a},${b}]${turnDouble ? ' DOUBLE' : ''}`);
 
-  if (!ENGINE.hasAnyMove(currentPlayer, pending, { doubleOne })) {
+  if (!ENGINE.hasAnyMove(currentPlayer, dice, { doubleOne })) {
+    markDice();
     setStatusMsg(`${PLAYERS[currentPlayer].name}: нет ходов`);
-    setTimeout(endTurn, 900);
+    if (window.DBG) DBG.log(`seat${currentPlayer} no moves`);
+    setTimeout(endTurn, 1100);
     return;
   }
   awaitingMove = true;
-  selectedDie = pending.findIndex(
-    (d) => ENGINE.legalForDie(currentPlayer, d, { doubleOne }).length > 0
-  );
+  selectedDie = firstUsableSlot();
   updateHighlights();
   updateStatus();
   refreshControls();
 }
 
+// Первый неиспользованный кубик, которым есть ход (или -1).
+function firstUsableSlot() {
+  for (let k = 0; k < dice.length; k++) {
+    if (!used[k] && ENGINE.legalForDie(currentPlayer, dice[k], { doubleOne }).length > 0) return k;
+  }
+  return -1;
+}
+
 function selectDie(idx) {
-  if (idx < 0 || idx >= pending.length) return;
-  if (ENGINE.legalForDie(currentPlayer, pending[idx], { doubleOne }).length === 0) return;
+  if (idx < 0 || idx >= dice.length || used[idx]) return;
+  if (ENGINE.legalForDie(currentPlayer, dice[idx], { doubleOne }).length === 0) return;
   selectedDie = idx;
   updateHighlights();
 }
 
 function updateHighlights() {
   const set = new Set();
-  if (awaitingMove && selectedDie >= 0) {
-    ENGINE.legalForDie(currentPlayer, pending[selectedDie], { doubleOne })
+  if (awaitingMove && selectedDie >= 0 && !used[selectedDie]) {
+    ENGINE.legalForDie(currentPlayer, dice[selectedDie], { doubleOne })
       .forEach((i) => set.add(`${currentPlayer},${i}`));
   }
   window.__movable = set;
-  markSelectedDie();
+  markDice();
   redrawBoard();
 }
 
-function markSelectedDie() {
+// Кубики: израсходованные затемняются, выбранный обводится.
+function markDice() {
   ['d1', 'd2'].forEach((id, idx) => {
     const el = document.getElementById(id);
-    if (el) el.classList.toggle('die-selected',
-      awaitingMove && idx === selectedDie && pending[idx] !== undefined);
+    if (!el) return;
+    el.classList.toggle('die-used', !!used[idx]);
+    el.classList.toggle('die-selected', awaitingMove && idx === selectedDie && !used[idx]);
   });
 }
 
 // Клик по фишке на доске (вызывается из board.js через window.onBoardClick).
 function onBoardClick(seat, i) {
-  if (isOnline() || !awaitingMove || seat !== currentPlayer) return;
+  if (isOnline() || !awaitingMove || bmChoice || seat !== currentPlayer) return;
 
   const piece = ENGINE.pieces[currentPlayer][i];
 
   // Выход из тюрьмы (шаг 1): при 6 клик по тюремной фишке ставит её на «Х»
-  // (тратит 6). Дальше фишку на «Х» двигают другим кубиком обычным кликом.
+  // (расходует кубик с 6). Дальше фишку на «Х» двигают другим кубиком кликом.
   if (piece.where === 'prison') {
-    const sixIdx = pending.indexOf(6);
-    if (sixIdx < 0) return;                  // выйти можно только при 6
+    const slot = dice.findIndex((d, k) => !used[k] && d === 6);
+    if (slot < 0) return;                    // выйти можно только при 6
     ENGINE.applyDie(currentPlayer, i, 6);    // встать на Х (progress 0)
-    pending.splice(sixIdx, 1);
+    used[slot] = true;
     selectedDie = -1;
     playDiceLand();
+    if (window.DBG) DBG.log(`seat${currentPlayer} piece${i} EXIT -> x${currentPlayer} (die6, slot${slot})`);
     afterMove();
     return;
   }
 
-  // Обычный ход фишкой одним кубиком (выбранным, иначе подходящим).
-  let useIdx = -1;
-  if (selectedDie >= 0 &&
-      ENGINE.legalForDie(currentPlayer, pending[selectedDie], { doubleOne }).includes(i)) {
-    useIdx = selectedDie;
+  // Обычный ход: неиспользованный кубик (выбранный, иначе любой подходящий).
+  let slot = -1;
+  if (selectedDie >= 0 && !used[selectedDie] &&
+      ENGINE.legalForDie(currentPlayer, dice[selectedDie], { doubleOne }).includes(i)) {
+    slot = selectedDie;
   } else {
-    useIdx = pending.findIndex(
-      (d) => ENGINE.legalForDie(currentPlayer, d, { doubleOne }).includes(i)
-    );
+    slot = dice.findIndex((d, k) => !used[k] &&
+      ENGINE.legalForDie(currentPlayer, d, { doubleOne }).includes(i));
   }
-  if (useIdx < 0) return; // этой фишкой сейчас ходить нельзя
+  if (slot < 0) return; // этой фишкой сейчас ходить нельзя
 
-  ENGINE.applyDie(currentPlayer, i, pending[useIdx]);
-  pending.splice(useIdx, 1);
+  const before = ENGINE.pieces[currentPlayer][i].progress;
+  const res = ENGINE.applyDie(currentPlayer, i, dice[slot]);
+  used[slot] = true;
   selectedDie = -1;
   playDiceLand();
+  if (window.DBG) {
+    const cell = ENGINE.cellOf(currentPlayer, i);
+    DBG.log(`seat${currentPlayer} piece${i} die${dice[slot]}: prog ${before}->` +
+      `${ENGINE.pieces[currentPlayer][i].progress} cell ${JSON.stringify(cell)}` +
+      `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}` +
+      `${res.finished ? ' HOME' : ''}`);
+  }
+
+  // Ход закончился напротив БМ — предложить съезд на БМ или остаться.
+  if (ENGINE.canOfferBM(currentPlayer, i)) { offerBM(currentPlayer, i); return; }
+  afterMove();
+}
+
+// Предложение «съехать на БМ или остаться» после хода напротив БМ.
+function offerBM(seat, i) {
+  bmChoice = { seat, i };
+  window.__movable = new Set([`${seat},${i}`]);
+  redrawBoard();
+  const el = document.getElementById('bm-prompt');
+  if (el) el.classList.remove('hidden');
+  setStatusMsg(`${PLAYERS[seat].name}: съехать на БМ?`);
+}
+
+function resolveBM(divert) {
+  if (!bmChoice) return;
+  const { seat, i } = bmChoice;
+  if (divert) ENGINE.divertToBM(seat, i);
+  if (window.DBG) DBG.log(`seat${seat} piece${i} ${divert ? '-> БМ' : 'остаётся на маршруте'}`);
+  bmChoice = null;
+  const el = document.getElementById('bm-prompt');
+  if (el) el.classList.add('hidden');
+  window.__movable = new Set();
   afterMove();
 }
 
@@ -233,9 +287,7 @@ function afterMove() {
   const win = ENGINE.winner();
   if (win >= 0) { redrawBoard(); finishGame(win); return; }
 
-  const next = pending.findIndex(
-    (d) => ENGINE.legalForDie(currentPlayer, d, { doubleOne }).length > 0
-  );
+  const next = firstUsableSlot();
   if (next >= 0) {
     selectedDie = next;
     updateHighlights();
@@ -247,17 +299,20 @@ function afterMove() {
 
 function endTurn() {
   awaitingMove = false;
-  pending = [];
+  dice = [];
+  used = [false, false];
   selectedDie = -1;
   window.__movable = new Set();
-  markSelectedDie();
+  markDice();
 
   if (turnDouble && !gameOver) {
     setStatusMsg(`${PLAYERS[currentPlayer].name}: дубль — ещё ход!`);
+    if (window.DBG) DBG.log(`seat${currentPlayer} EXTRA turn (double)`);
   } else {
     currentPlayer = (currentPlayer + 1) % 4;
     window.__turnSeat = currentPlayer;
     updateStatus();
+    if (window.DBG) DBG.log(`turn -> seat${currentPlayer}`);
   }
   redrawBoard();
   refreshControls();
@@ -268,6 +323,7 @@ function finishGame(seat) {
   awaitingMove = false;
   window.__movable = new Set();
   setStatusMsg(`🏆 ${PLAYERS[seat].name} победил!`);
+  if (window.DBG) DBG.log(`WINNER seat${seat}`);
   refreshControls();
 }
 
@@ -276,11 +332,13 @@ function onResetClick() {
   ENGINE.newGame();
   currentPlayer = 0;
   window.__turnSeat = 0;
-  pending = []; selectedDie = -1; awaitingMove = false;
-  turnDouble = false; doubleOne = false; gameOver = false;
+  dice = []; used = [false, false]; selectedDie = -1; awaitingMove = false;
+  turnDouble = false; doubleOne = false; gameOver = false; bmChoice = null;
   window.__movable = new Set();
   document.getElementById('total').textContent = 'Сумма: —';
-  markSelectedDie();
+  const bmEl = document.getElementById('bm-prompt');
+  if (bmEl) bmEl.classList.add('hidden');
+  markDice();
   updateStatus();
   redrawBoard();
   refreshControls();
