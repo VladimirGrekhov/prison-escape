@@ -1,0 +1,30 @@
+[Unit]
+Description=Prison Escape multiplayer server (Colyseus)
+After=network.target
+
+[Service]
+Type=simple
+User=prison-mp
+Group=prison-mp
+WorkingDirectory=/opt/prison-escape-server
+ExecStart=/usr/bin/node /opt/prison-escape-server/index.js
+Environment=PORT=2567
+Environment=HOST=127.0.0.1
+Restart=on-failure
+RestartSec=3
+
+# Hardening — the server only needs to read its own code and bind localhost.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/prison-escape-server/logs
+ProtectHome=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target
