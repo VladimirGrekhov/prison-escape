@@ -130,6 +130,11 @@ function bmCenter(b) {
   return { x: boardPx(b.c) + b.nx * g, y: boardPy(b.r) + b.ny * g };
 }
 
+// Экспресс-клетки: стоя на одной из них и выбросив 1, можно перепрыгнуть на
+// следующую (по кругу 6→20→34→48→6). Это даёт дополнительный ход.
+const EXPRESS = [6, 20, 34, 48];
+const EXPRESS_NEXT = { 6: 20, 20: 34, 34: 48, 48: 6 };
+
 // Палитры доски (canvas) для дневной и ночной темы.
 const THEMES = {
   day: {
@@ -159,6 +164,7 @@ const THEMES = {
 let activeTheme = THEMES.day;
 let boardCanvas = null;
 let __pieceHits = [];   // [{seat,i,x,y,r}] для попадания клика по фишке (canvas-координаты)
+let __targetHits = [];  // [{idx,x,y,r}] для попадания клика по клетке-цели
 
 function isOnlineMode() { return !!(window.MP && window.MP.enabled); }
 
@@ -338,17 +344,15 @@ function drawCorner(ctx, cx, cy, player, opts) {
   }
 
   if (opts.engineMode && window.ENGINE) {
-    // Только фишки, ещё сидящие в тюрьме, по их реальным индексам.
-    const row = ENGINE.pieces[opts.seat];
-    let slot = 0;
-    for (let i = 0; i < row.length; i++) {
-      if (row[i].where !== 'prison') continue;
-      const off = PIECE_OFFSETS[slot++] || [0, 0];
+    // Фишки в этой тюрьме: свои + пленные (рисуются цветом владельца).
+    const held = ENGINE.heldInPrison(opts.seat);
+    held.forEach((h, slot) => {
+      const off = PIECE_OFFSETS[slot] || [0, 0];
       const x = cx + off[0], y = cy + off[1];
-      const hl = opts.movable && opts.movable.has(`${opts.seat},${i}`);
-      drawPiece(ctx, x, y, player.color, R * 1.2, hl);
-      __pieceHits.push({ seat: opts.seat, i, x, y, r: R * 1.4 });
-    }
+      const hl = opts.movable && opts.movable.has(`${h.seat},${h.i}`);
+      drawPiece(ctx, x, y, PLAYERS[h.seat].color, R * 1.2, hl);
+      __pieceHits.push({ seat: h.seat, i: h.i, x, y, r: R * 1.4 });
+    });
   } else {
     PIECE_OFFSETS.forEach(([dx, dy]) => {
       drawPiece(ctx, cx + dx, cy + dy, player.color);
@@ -372,6 +376,7 @@ function drawBoard(canvas) {
 
   boardCanvas = canvas;
   __pieceHits = [];
+  __targetHits = [];
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = activeTheme.bg;
   ctx.fillRect(0, 0, TW, TH);
@@ -440,10 +445,56 @@ function drawBoard(canvas) {
     movable,
   }));
 
+  // Экспресс-клетки — тонкое синее кольцо-маркер.
+  ctx.save();
+  ctx.strokeStyle = '#1e90ff';
+  ctx.lineWidth = 3;
+  EXPRESS.forEach((idx) => {
+    const [r, c] = TRACK[idx];
+    const p = cellCenter(r, c);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, R * 0.72, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  // Клетки-цели (куда можно походить) — подсветка инверсией + кликабельны.
+  if (engineMode) drawTargets(ctx);
+
   // Фишки на маршруте/в дорожке (только в офлайн-режиме движка).
   if (engineMode) drawTrackPieces(ctx, movable);
 
   drawDebug(ctx);
+}
+
+// Центр клетки-цели в canvas-координатах (учёт смещения «Х» и кармана БМ).
+function targetCenter(t) {
+  if (t.kind === 'exit') return xCenter(t.seat);
+  if (t.kind === 'bmDivert') return bmCenter(t.bm);
+  return cellCenter(t.cell[0], t.cell[1]);
+}
+function targetRadius(t) {
+  return (t.kind === 'bmDivert' || t.kind === 'exit') ? R * 1.15 : R * 0.92;
+}
+
+// Подсветка клеток-целей инверсией цвета (globalCompositeOperation 'difference').
+function drawTargets(ctx) {
+  const targets = window.__targets;
+  if (!targets || !targets.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'difference';
+  ctx.fillStyle = '#ffffff';
+  targets.forEach((t) => {
+    const c = targetCenter(t);
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, targetRadius(t), 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+  targets.forEach((t, idx) => {
+    const c = targetCenter(t);
+    __targetHits.push({ idx, x: c.x, y: c.y, r: targetRadius(t) + R * 0.15 });
+  });
 }
 
 // Отладочная нумерация клеток (включается ?debug=1). Подписи смещены в угол
@@ -512,13 +563,25 @@ function drawTrackPieces(ctx, movable) {
   });
 }
 
-// Клик по доске → ближайшая фишка под курсором → window.onBoardClick(seat,i).
+// Клик по доске: сначала клетки-цели (onTargetClick), затем фишки (onBoardClick).
 function setupBoardInput(canvas) {
   canvas.addEventListener('click', (e) => {
-    if (typeof window.onBoardClick !== 'function') return;
     const rect = canvas.getBoundingClientRect();
     const x = (e.clientX - rect.left) * (canvas.width / rect.width);
     const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+
+    // 1) клетка-цель
+    if (typeof window.onTargetClick === 'function') {
+      let bt = null, btD = Infinity;
+      for (const h of __targetHits) {
+        const d = Math.hypot(x - h.x, y - h.y);
+        if (d <= h.r && d < btD) { bt = h; btD = d; }
+      }
+      if (bt) { window.onTargetClick(bt.idx); return; }
+    }
+
+    // 2) фишка
+    if (typeof window.onBoardClick !== 'function') return;
     let best = null, bestD = Infinity;
     for (const h of __pieceHits) {
       const d = Math.hypot(x - h.x, y - h.y);

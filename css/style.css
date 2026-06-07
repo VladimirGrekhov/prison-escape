@@ -160,6 +160,30 @@ body {
   box-shadow: 0 0 12px var(--btn-hover);
 }
 
+/* Bonus die (the redeemed-from compensation: extra 6). */
+.die.die-bonus {
+  position: relative;
+  border-color: #d4a017;
+  box-shadow: 0 0 8px rgba(212, 160, 23, 0.7);
+}
+.die.die-bonus[data-count]:not([data-count=""])::after {
+  content: attr(data-count);
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #2a1000;
+  background: #d4a017;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Spent die (its value has been used this turn). */
 .die.die-used {
   opacity: 0.3;
@@ -183,11 +207,13 @@ body {
   justify-content: center;
 }
 
-/* Prompt: divert to БМ or stay. */
-#bm-prompt {
+/* Prompts: divert to БМ / express jump. */
+#bm-prompt, #express-prompt {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
   padding: 8px 14px;
   border-radius: 14px;
   background: var(--status-bg);
@@ -196,9 +222,9 @@ body {
   font-weight: 600;
 }
 
-#bm-prompt.hidden { display: none; }
+#bm-prompt.hidden, #express-prompt.hidden { display: none; }
 
-#bm-prompt button {
+#bm-prompt button, #express-prompt button {
   padding: 7px 14px;
   font-size: 14px;
   font-weight: 600;
@@ -210,8 +236,8 @@ body {
   transition: background 0.15s, transform 0.1s;
 }
 
-#bm-prompt button:hover  { background: var(--btn-hover); }
-#bm-prompt button:active { transform: scale(0.96); }
+#bm-prompt button:hover,  #express-prompt button:hover  { background: var(--btn-hover); }
+#bm-prompt button:active, #express-prompt button:active { transform: scale(0.96); }
 
 /* Multiplayer status + controls bar. */
 #mp-bar {

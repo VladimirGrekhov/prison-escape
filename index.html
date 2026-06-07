@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=26">
+  <link rel="stylesheet" href="css/style.css?v=34">
 </head>
 <body>
 
@@ -24,15 +24,17 @@
       <div class="die" id="d1">⚀</div>
       <button id="roll-btn">Бросить</button>
       <div class="die" id="d2">⚀</div>
+      <div class="die die-bonus" id="d3" title="Бонусный ход на 6" style="display:none">⚅</div>
     </div>
 
     <div id="total">Сумма: —</div>
     <div id="status">Ход игрока 1</div>
 
-    <div id="bm-prompt" class="hidden">
-      <span>🛡 Ход напротив БМ:</span>
-      <button id="bm-yes">Съехать на БМ</button>
-      <button id="bm-no">Остаться</button>
+    <div id="express-prompt" class="hidden">
+      <span id="express-label">🚀 Экспресс?</span>
+      <button id="express-yes">Экспресс</button>
+      <button id="express-step">Обычный +1</button>
+      <button id="express-no">Отмена</button>
     </div>
 
     <div id="mp-bar">
@@ -69,7 +71,12 @@
         <ul>
           <li>Игрок бросает кубики и двигает фишку на выпавшее число.</li>
           <li>Если выпал любой <b>дубль</b> — игрок ходит и получает дополнительный ход.</li>
+          <li>Нельзя перепрыгивать через свою фишку — она блокирует ход.</li>
+          <li>Нельзя ставить две свои фишки на одну клетку.</li>
         </ul>
+
+        <h3>🚀 Экспресс</h3>
+        <p>Клетки 6, 20, 34, 48 (отмечены синим кольцом) — экспресс. Если твоя фишка стоит на одной из них и выпала <b>1</b>, можно перепрыгнуть на следующую (6→20→34→48→6 по кругу) и получить <b>дополнительный ход</b>.</p>
 
         <h3>Безопасное место (БМ)</h3>
         <ul>
@@ -78,8 +85,12 @@
           <li><b>Дубль 1</b> позволяет прорвать блокаду БМ или выйти с БМ.</li>
         </ul>
 
-        <h3>Захват</h3>
-        <p>Если твоя фишка встаёт на клетку с фишкой противника (не на БМ) — фишка противника возвращается в тюрьму.</p>
+        <h3>Захват и плен</h3>
+        <ul>
+          <li>Любая фишка противника <b>на пути</b> твоего хода (кроме стоящих на БМ/Х) срубается и попадает в плен — в <b>твою</b> тюрьму.</li>
+          <li>Чтобы выкупить свою пленную фишку, выбрось <b>6</b> и кликни её — она вернётся в свою тюрьму (6 тратится на выкуп).</li>
+          <li>Тот, у кого выкупили фишку, получает в свой ход бонусные <b>6</b> шагов.</li>
+        </ul>
 
         <h3>Финиш</h3>
         <ul>
@@ -90,13 +101,13 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=26"></script>
-  <script src="js/board.js?v=26"></script>
-  <script src="js/engine.js?v=26"></script>
-  <script src="js/debug.js?v=26"></script>
-  <script src="js/sound.js?v=26"></script>
-  <script src="js/game.js?v=26"></script>
-  <script src="js/net.js?v=26"></script>
+  <script src="js/colyseus.js?v=34"></script>
+  <script src="js/board.js?v=34"></script>
+  <script src="js/engine.js?v=34"></script>
+  <script src="js/debug.js?v=34"></script>
+  <script src="js/sound.js?v=34"></script>
+  <script src="js/game.js?v=34"></script>
+  <script src="js/net.js?v=34"></script>
 
 </body>
 </html>
