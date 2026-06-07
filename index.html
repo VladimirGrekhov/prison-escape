@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=10">
+  <link rel="stylesheet" href="css/style.css?v=20">
 </head>
 <body>
 
@@ -31,6 +31,7 @@
 
     <div id="mp-bar">
       <span id="mp-status">🔌 Локальная игра</span>
+      <button id="mode-btn">🔌 Играть локально</button>
       <div id="mp-controls">
         <input id="name-input" type="text" maxlength="16" placeholder="Ваше имя" />
         <button id="reset-btn" title="Начать заново">↺ Сброс</button>
@@ -43,16 +44,51 @@
       <button id="rules-close" title="Закрыть" aria-label="Закрыть">✕</button>
       <h2 id="rules-title">📖 Правила игры</h2>
       <div id="rules-body">
-        <p>Правила скоро появятся здесь.</p>
+        <h3>Игроки</h3>
+        <p>От 2 до 4 игроков, у каждого по 5 фишек.</p>
+
+        <h3>Цель</h3>
+        <p>Первым провести все свои фишки по всему полю и загнать их домой.</p>
+
+        <h3>Начало игры</h3>
+        <ul>
+          <li>Все фишки начинают в тюрьме.</li>
+          <li>Выпала хотя бы одна <b>6</b> — кликни фишку в тюрьме, и она встанет на свой <b>Х</b> (тратится 6).</li>
+          <li>Фишку, стоящую на <b>Х</b>, двинь другим кубиком — на столько клеток, сколько он показывает.</li>
+          <li>Кружок с буквой <b>Х</b> (цветом игрока) — вход на маршрут: от него отсчитывается ход.</li>
+        </ul>
+
+        <h3>Ход</h3>
+        <ul>
+          <li>Игрок бросает кубики и двигает фишку на выпавшее число.</li>
+          <li>Если выпал любой <b>дубль</b> — игрок ходит и получает дополнительный ход.</li>
+        </ul>
+
+        <h3>Безопасное место (БМ)</h3>
+        <ul>
+          <li>Фишка на БМ защищена — её нельзя срубить.</li>
+          <li>Если фишка противника стоит рядом с твоим БМ — ты заблокирован и не можешь выйти с БМ.</li>
+          <li><b>Дубль 1</b> позволяет прорвать блокаду БМ или выйти с БМ.</li>
+        </ul>
+
+        <h3>Захват</h3>
+        <p>Если твоя фишка встаёт на клетку с фишкой противника (не на БМ) — фишка противника возвращается в тюрьму.</p>
+
+        <h3>Финиш</h3>
+        <ul>
+          <li>Чтобы зайти домой, нужно выбросить точное число.</li>
+          <li>Побеждает тот, кто первым привёл все 5 фишек домой.</li>
+        </ul>
       </div>
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=10"></script>
-  <script src="js/board.js?v=10"></script>
-  <script src="js/sound.js?v=10"></script>
-  <script src="js/game.js?v=10"></script>
-  <script src="js/net.js?v=10"></script>
+  <script src="js/colyseus.js?v=20"></script>
+  <script src="js/board.js?v=20"></script>
+  <script src="js/engine.js?v=20"></script>
+  <script src="js/sound.js?v=20"></script>
+  <script src="js/game.js?v=20"></script>
+  <script src="js/net.js?v=20"></script>
 
 </body>
 </html>

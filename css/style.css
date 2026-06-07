@@ -153,6 +153,13 @@ body {
   cursor: default;
 }
 
+/* Selected die in the move phase (offline). */
+.die.die-selected {
+  outline: 3px solid var(--btn-hover);
+  outline-offset: 2px;
+  box-shadow: 0 0 12px var(--btn-hover);
+}
+
 /* Multiplayer status + controls bar. */
 #mp-bar {
   display: flex;
@@ -170,6 +177,21 @@ body {
   border-radius: 16px;
   transition: background 0.3s, color 0.3s;
 }
+
+#mode-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 16px;
+  cursor: pointer;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  transition: background 0.15s, transform 0.1s;
+}
+
+#mode-btn:hover  { background: var(--btn-hover); }
+#mode-btn:active { transform: scale(0.96); }
 
 #mp-controls {
   display: none; /* shown by net.js only when online */

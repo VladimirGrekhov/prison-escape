@@ -40,6 +40,73 @@ const ENTRY_CELLS = new Set([
   '10,17',  // право
 ]);
 
+// ----------------------------------------------------------------------------
+// Топология маршрута (для игрового движка). Клетки — [row, col] сетки.
+// Пиксели берутся через boardPx/boardPy. Координаты подобраны под текущую доску
+// и подлежат визуальной донастройке вместе с пользователем.
+// ----------------------------------------------------------------------------
+
+// Главная петля по периметру креста (56 клеток). `.reverse()` задаёт направление
+// движения — против часовой стрелки.
+const TRACK = [
+  [3,10],[3,11],[4,11],[5,11],[6,11],[7,11],[8,11],[9,11],
+  [9,12],[9,13],[9,14],[9,15],[9,16],[9,17],
+  [10,17],
+  [11,17],[11,16],[11,15],[11,14],[11,13],[11,12],[11,11],
+  [12,11],[13,11],[14,11],[15,11],[16,11],[17,11],
+  [17,10],
+  [17,9],[16,9],[15,9],[14,9],[13,9],[12,9],[11,9],
+  [11,8],[11,7],[11,6],[11,5],[11,4],[11,3],
+  [10,3],
+  [9,3],[9,4],[9,5],[9,6],[9,7],[9,8],[9,9],
+  [8,9],[7,9],[6,9],[5,9],[4,9],[3,9],
+].reverse();
+const TRACK_KEY = TRACK.map(([r, c]) => `${r},${c}`);
+const trackIndexOf = (r, c) => TRACK_KEY.indexOf(`${r},${c}`);
+
+// Клетка-вход на маршрут для каждого места (откуда фишка выходит из тюрьмы).
+const ENTRY = [
+  trackIndexOf(3, 10),   // место 0 — верхний луч
+  trackIndexOf(10, 17),  // место 1 — правый луч
+  trackIndexOf(17, 10),  // место 2 — нижний луч
+  trackIndexOf(10, 3),   // место 3 — левый луч
+];
+
+// Домашняя дорожка (I→V→центр) для каждого места, от кончика луча к центру.
+const HOME_LANE = [
+  [[4,10],[5,10],[6,10],[7,10],[8,10],[9,10],[10,10]],     // верх
+  [[10,16],[10,15],[10,14],[10,13],[10,12],[10,11],[10,10]], // право
+  [[16,10],[15,10],[14,10],[13,10],[12,10],[11,10],[10,10]], // низ
+  [[10,4],[10,5],[10,6],[10,7],[10,8],[10,9],[10,10]],     // лево
+];
+
+const TRACK_MAIN = TRACK.length;        // длина петли
+const LANE_LEN = HOME_LANE[0].length;   // длина домашней дорожки (включая центр)
+// progress 0 = кружок «Х» (старт после выхода); 1..TRACK_MAIN — петля; далее дорожка.
+const MAX_PROGRESS = TRACK_MAIN + LANE_LEN; // точное число для финиша (центр)
+
+// Кружок «Х» (вход в дом) каждого места — стартовая позиция после выхода (progress 0).
+const X_GRID = [
+  [2, 9],   // место 0 — верх
+  [9, 18],  // место 1 — право
+  [18, 11], // место 2 — низ
+  [11, 2],  // место 3 — лево
+];
+const X_OFF = R * 0.45; // сдвиг центра «Х» наружу (как у нарисованного крупного кружка)
+const X_SHIFT = [[0, -X_OFF], [X_OFF, 0], [0, X_OFF], [-X_OFF, 0]];
+function xCenter(seat) {
+  const [r, c] = X_GRID[seat];
+  return { x: boardPx(c) + X_SHIFT[seat][0], y: boardPy(r) + X_SHIFT[seat][1] };
+}
+
+// Безопасные клетки (нельзя срубить): входы на маршрут + кружки «Х».
+const SAFE = new Set([
+  '3,10', '10,17', '17,10', '10,3',
+  '2,9', '9,18', '18,11', '11,2',
+]);
+
+function cellCenter(r, c) { return { x: boardPx(c), y: boardPy(r) }; }
+
 // nx/ny — направление сдвига наружу (от прилегающей клетки луча креста),
 // чтобы увеличенный кружок не наезжал на соседа.
 const BM_CELLS = [
@@ -77,6 +144,9 @@ const THEMES = {
 
 let activeTheme = THEMES.day;
 let boardCanvas = null;
+let __pieceHits = [];   // [{seat,i,x,y,r}] для попадания клика по фишке (canvas-координаты)
+
+function isOnlineMode() { return !!(window.MP && window.MP.enabled); }
 
 const PLAYERS = [
   { color: '#e04040', name: 'Игрок 1' },
@@ -105,7 +175,7 @@ function inCross(r, c) {
 function boardPx(c) { return MARGIN + OFF + c * SP + R; }
 function boardPy(r) { return MARGIN + OFF + r * SP + R; }
 
-function drawCircle(ctx, x, y, label, white, rad = R) {
+function drawCircle(ctx, x, y, label, white, rad = R, labelColor) {
   ctx.beginPath();
   ctx.arc(x, y, rad + 2, 0, Math.PI * 2);
   ctx.fillStyle = activeTheme.ring;
@@ -120,7 +190,7 @@ function drawCircle(ctx, x, y, label, white, rad = R) {
   ctx.stroke();
 
   if (label) {
-    ctx.fillStyle = activeTheme.ink;
+    ctx.fillStyle = labelColor || activeTheme.ink;
     ctx.font = `bold ${String(label).length > 2 ? rad * 0.64 : rad * 0.82}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -190,8 +260,21 @@ function drawBars(ctx, x, y, size) {
   }
 }
 
-function drawPiece(ctx, x, y, color) {
-  const FR = R * 1.2;
+function drawPiece(ctx, x, y, color, rad, highlight) {
+  const FR = rad || R * 1.2;
+
+  if (highlight) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(x, y, FR + 4, 0, Math.PI * 2);
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 16;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffffff';
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.beginPath();
   ctx.arc(x, y, FR + 2, 0, Math.PI * 2);
   ctx.fillStyle = '#1e0e00';
@@ -240,9 +323,23 @@ function drawCorner(ctx, cx, cy, player, opts) {
     ctx.stroke();
   }
 
-  PIECE_OFFSETS.forEach(([dx, dy]) => {
-    drawPiece(ctx, cx + dx, cy + dy, player.color);
-  });
+  if (opts.engineMode && window.ENGINE) {
+    // Только фишки, ещё сидящие в тюрьме, по их реальным индексам.
+    const row = ENGINE.pieces[opts.seat];
+    let slot = 0;
+    for (let i = 0; i < row.length; i++) {
+      if (row[i].where !== 'prison') continue;
+      const off = PIECE_OFFSETS[slot++] || [0, 0];
+      const x = cx + off[0], y = cy + off[1];
+      const hl = opts.movable && opts.movable.has(`${opts.seat},${i}`);
+      drawPiece(ctx, x, y, player.color, R * 1.2, hl);
+      __pieceHits.push({ seat: opts.seat, i, x, y, r: R * 1.4 });
+    }
+  } else {
+    PIECE_OFFSETS.forEach(([dx, dy]) => {
+      drawPiece(ctx, cx + dx, cy + dy, player.color);
+    });
+  }
 
   ctx.fillStyle = 'rgba(255,255,255,0.8)';
   ctx.font = `bold ${R * 1.1}px sans-serif`;
@@ -260,6 +357,7 @@ function drawBoard(canvas) {
   canvas.height = TH;
 
   boardCanvas = canvas;
+  __pieceHits = [];
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = activeTheme.bg;
   ctx.fillRect(0, 0, TW, TH);
@@ -286,11 +384,12 @@ function drawBoard(canvas) {
     drawCircle(ctx, boardPx(c) + nx * ENDGAP, boardPy(r) + ny * ENDGAP, 'БМ', true, ENDR);
   });
 
-  // Одиночки (концы лучей, напротив римской I) — входы в дом, белые и крупнее.
-  drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, '', true, ENDR);  // верх
-  drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, '', true, ENDR);  // низ
-  drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Л', true, ENDR); // лево
-  drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'В', true, ENDR); // право
+  // Одиночки (концы лучей, напротив римской I) — входы в дом игрока:
+  // белые, крупные, с буквой «Х» цветом владеющего лучом игрока.
+  drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, 'Х', true, ENDR, PLAYERS[0].color); // верх → игрок 1
+  drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, 'Х', true, ENDR, PLAYERS[2].color); // низ  → игрок 3
+  drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Х', true, ENDR, PLAYERS[3].color); // лево → игрок 4
+  drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'Х', true, ENDR, PLAYERS[1].color); // право→ игрок 2
 
   // Стрелки
   drawArrow(ctx, boardPx(centerC),   boardPy(centerR-1), Math.PI);
@@ -315,12 +414,71 @@ function drawBoard(canvas) {
     { cx: inX,       cy: TH - inY },
     { cx: TW - inX,  cy: TH - inY },
   ];
+  const engineMode = !isOnlineMode() && !!window.ENGINE;
+  const movable = window.__movable instanceof Set ? window.__movable : null;
   corners.forEach((pos, i) => drawCorner(ctx, pos.cx, pos.cy, PLAYERS[i], {
     highlight: window.__turnSeat === i,
     // In online mode __occupied is a Set of taken seats; offline it's undefined
     // and every seat is treated as present (classic hot-seat board).
     occupied: window.__occupied ? window.__occupied.has(i) : undefined,
+    engineMode,
+    seat: i,
+    movable,
   }));
+
+  // Фишки на маршруте/в дорожке (только в офлайн-режиме движка).
+  if (engineMode) drawTrackPieces(ctx, movable);
+}
+
+// Рисует все фишки, вышедшие из тюрьмы, на их клетках. Несколько фишек на одной
+// клетке слегка раздвигаются. Заполняет __pieceHits для попадания клика.
+function drawTrackPieces(ctx, movable) {
+  const PR = R * 0.8;                 // фишка чуть меньше клетки
+  const groups = {};                 // "x,y" -> { x, y, list:[{seat,i}] }
+  for (let s = 0; s < ENGINE.SEATS; s++) {
+    for (let i = 0; i < ENGINE.PER_SEAT; i++) {
+      const p = ENGINE.pieces[s][i];
+      if (p.where === 'prison' || p.where === 'home') continue;
+      let pos;
+      if (p.where === 'track' && p.progress === 0) {
+        pos = xCenter(s);            // стоит на кружке «Х»
+      } else {
+        const cell = ENGINE.cellOf(s, i);
+        if (!cell) continue;
+        pos = cellCenter(cell[0], cell[1]);
+      }
+      const key = `${Math.round(pos.x)},${Math.round(pos.y)}`;
+      (groups[key] || (groups[key] = { x: pos.x, y: pos.y, list: [] })).list.push({ seat: s, i });
+    }
+  }
+  Object.values(groups).forEach((g) => {
+    g.list.forEach((p, n) => {
+      // лёгкое раздвижение при наложении нескольких фишек
+      const ang = g.list.length > 1 ? (n / g.list.length) * Math.PI * 2 : 0;
+      const rad = g.list.length > 1 ? R * 0.35 : 0;
+      const px = g.x + Math.cos(ang) * rad;
+      const py = g.y + Math.sin(ang) * rad;
+      const hl = movable && movable.has(`${p.seat},${p.i}`);
+      drawPiece(ctx, px, py, PLAYERS[p.seat].color, PR, hl);
+      __pieceHits.push({ seat: p.seat, i: p.i, x: px, y: py, r: PR + 4 });
+    });
+  });
+}
+
+// Клик по доске → ближайшая фишка под курсором → window.onBoardClick(seat,i).
+function setupBoardInput(canvas) {
+  canvas.addEventListener('click', (e) => {
+    if (typeof window.onBoardClick !== 'function') return;
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    let best = null, bestD = Infinity;
+    for (const h of __pieceHits) {
+      const d = Math.hypot(x - h.x, y - h.y);
+      if (d <= h.r && d < bestD) { best = h; bestD = d; }
+    }
+    if (best) window.onBoardClick(best.seat, best.i);
+  });
 }
 
 // Переключение темы: палитра страницы (через data-theme) + перерисовка доски.
