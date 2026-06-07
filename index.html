@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prison Escape</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <div id="corner-label">АГЗ 777</div>
+
+  <button id="theme-btn" title="Сменить тему">🌙</button>
+
+  <div id="app">
+    <h1 id="title">🔒 PRISON ESCAPE</h1>
+
+    <div id="game-wrap">
+      <canvas id="board"></canvas>
+    </div>
+
+    <div id="dice-area">
+      <div class="die" id="d1">⚀</div>
+      <button id="roll-btn">Бросить</button>
+      <div class="die" id="d2">⚀</div>
+    </div>
+
+    <div id="total">Сумма: —</div>
+    <div id="status">Ход игрока 1</div>
+
+    <div id="mp-bar">
+      <span id="mp-status">🔌 Локальная игра</span>
+      <div id="mp-controls">
+        <input id="name-input" type="text" maxlength="16" placeholder="Ваше имя" />
+        <button id="reset-btn" title="Начать заново">↺ Сброс</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/colyseus.js"></script>
+  <script src="js/board.js"></script>
+  <script src="js/sound.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/net.js"></script>
+
+</body>
+</html>
