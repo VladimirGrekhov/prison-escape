@@ -22,11 +22,23 @@ const ARROW_CELLS = new Set([
   `${centerR},${centerC-1}`,
 ]);
 
+// Диагональные кружки вокруг центра — стрелки смотрят внутрь, на решётку.
+// `a` — угол стрелки (0 = вправо, по часовой; canvas y вниз).
+const DIAG_ARROWS = [
+  { r: centerR-1, c: centerC-1, a:  Math.PI/4 },   // верх-лево  → центр
+  { r: centerR-1, c: centerC+1, a:  3*Math.PI/4 }, // верх-право → центр
+  { r: centerR+1, c: centerC-1, a: -Math.PI/4 },   // низ-лево   → центр
+  { r: centerR+1, c: centerC+1, a: -3*Math.PI/4 }, // низ-право  → центр
+];
+const DIAG_ARROW_CELLS = new Set(DIAG_ARROWS.map(d => `${d.r},${d.c}`));
+
+// nx/ny — направление сдвига наружу (от прилегающей клетки луча креста),
+// чтобы увеличенный кружок не наезжал на соседа.
 const BM_CELLS = [
-  {r:8,c:6},{r:12,c:6},
-  {r:8,c:14},{r:12,c:14},
-  {r:6,c:8},{r:6,c:12},
-  {r:14,c:8},{r:14,c:12},
+  {r:8,  c:6,  nx:0,  ny:-1}, {r:12, c:6,  nx:0,  ny:1},
+  {r:8,  c:14, nx:0,  ny:-1}, {r:12, c:14, nx:0,  ny:1},
+  {r:6,  c:8,  nx:-1, ny:0},  {r:6,  c:12, nx:1,  ny:0},
+  {r:14, c:8,  nx:-1, ny:0},  {r:14, c:12, nx:1,  ny:0},
 ];
 
 // Палитры доски (canvas) для дневной и ночной темы.
@@ -85,15 +97,15 @@ function inCross(r, c) {
 function boardPx(c) { return MARGIN + OFF + c * SP + R; }
 function boardPy(r) { return MARGIN + OFF + r * SP + R; }
 
-function drawCircle(ctx, x, y, label, bm) {
+function drawCircle(ctx, x, y, label, bm, rad = R) {
   ctx.beginPath();
-  ctx.arc(x, y, R + 2, 0, Math.PI * 2);
+  ctx.arc(x, y, rad + 2, 0, Math.PI * 2);
   ctx.fillStyle = activeTheme.ring;
   ctx.fill();
 
   ctx.beginPath();
-  ctx.arc(x, y, R, 0, Math.PI * 2);
-  ctx.fillStyle = bm ? activeTheme.bm : activeTheme.cell;
+  ctx.arc(x, y, rad, 0, Math.PI * 2);
+  ctx.fillStyle = bm ? '#ffffff' : activeTheme.cell;  // БМ — чисто белый фон
   ctx.fill();
   ctx.strokeStyle = activeTheme.cellStroke;
   ctx.lineWidth = 1;
@@ -101,7 +113,7 @@ function drawCircle(ctx, x, y, label, bm) {
 
   if (label) {
     ctx.fillStyle = activeTheme.ink;
-    ctx.font = `bold ${String(label).length > 2 ? R * 0.64 : R * 0.82}px serif`;
+    ctx.font = `bold ${String(label).length > 2 ? rad * 0.64 : rad * 0.82}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, x, y);
@@ -250,28 +262,36 @@ function drawBoard(canvas) {
       const key = `${r},${c}`;
       if (r === centerR && c === centerC) continue;
       if (ARROW_CELLS.has(key)) continue;
+      if (DIAG_ARROW_CELLS.has(key)) continue;
       if (inCross(r, c)) {
         drawCircle(ctx, boardPx(c), boardPy(r), ROMAN_CELLS[key] || '', false);
       }
     }
   }
 
+  // Крупные кружки (БМ и концы лучей) — больше обычных клеток.
+  const ENDR = R * 1.45;     // радиус крупных кружков
+  const ENDGAP = ENDR - R;   // сдвиг наружу, чтобы зазор до соседней клетки был как у обычных (4px)
+
   // БМ
-  BM_CELLS.forEach(({r, c}) => {
-    drawCircle(ctx, boardPx(c), boardPy(r), 'БМ', true);
+  BM_CELLS.forEach(({r, c, nx, ny}) => {
+    drawCircle(ctx, boardPx(c) + nx * ENDGAP, boardPy(r) + ny * ENDGAP, 'БМ', true, ENDR);
   });
 
-  // Одиночки
-  drawCircle(ctx, boardPx(9),  boardPy(2),  '', false);
-  drawCircle(ctx, boardPx(11), boardPy(18), '', false);
-  drawCircle(ctx, boardPx(2),  boardPy(11), 'Л', false);
-  drawCircle(ctx, boardPx(18), boardPy(9),  'В', false);
+  // Одиночки (концы лучей креста) — рисуем крупнее остальных.
+  drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, '', false, ENDR);  // верх
+  drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, '', false, ENDR);  // низ
+  drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Л', false, ENDR); // лево
+  drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'В', false, ENDR); // право
 
   // Стрелки
   drawArrow(ctx, boardPx(centerC),   boardPy(centerR-1), Math.PI);
   drawArrow(ctx, boardPx(centerC+1), boardPy(centerR),  -Math.PI/2);
   drawArrow(ctx, boardPx(centerC),   boardPy(centerR+1), 0);
   drawArrow(ctx, boardPx(centerC-1), boardPy(centerR),   Math.PI/2);
+
+  // Диагональные стрелки в углах вокруг центра — смотрят внутрь.
+  DIAG_ARROWS.forEach(({ r, c, a }) => drawArrow(ctx, boardPx(c), boardPy(r), a));
 
   // Решётка в центре
   drawBars(ctx, boardPx(centerC), boardPy(centerR), R + 2);
