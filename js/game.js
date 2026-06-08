@@ -145,11 +145,8 @@ function onRollClick() {
   if (rolling || bmChoice || expressChoice) return;
 
   if (isOnline()) {
-    // Only the seat whose turn it is may roll. The server is authoritative and
-    // will ignore stray rolls; we just avoid sending noise. The dice animation
-    // is triggered for everyone by the resulting state broadcast (see net.js).
-    if (!MP.isMyTurn()) return;
-    MP.sendRoll();
+    // Server is authoritative; send the intent only when we may actually roll.
+    if (MP.canRoll()) MP.roll();
     return;
   }
 
@@ -295,6 +292,7 @@ function onTargetClick(idx) {
 }
 
 function doExit(i, slot) {
+  if (isOnline()) { MP.act('exit', i, slot); return; }
   ENGINE.applyDie(currentPlayer, i, 6);
   used[slot] = true; selectedDie = -1; playDiceLand();
   if (window.DBG) DBG.log(`seat${currentPlayer} piece${i} EXIT -> x${currentPlayer}`);
@@ -302,6 +300,7 @@ function doExit(i, slot) {
 }
 
 function doExpress(seat, i, slot) {
+  if (isOnline()) { MP.act('express', i, slot); return; }
   ENGINE.expressJump(seat, i);
   used[slot] = true; selectedDie = -1; expressUsed = true; playDiceLand();
   if (window.DBG) DBG.log(`seat${seat} piece${i} EXPRESS (+доп. ход)`);
@@ -343,6 +342,7 @@ function onBoardClick(seat, i) {
 
     // Пленная фишка: выкуп за 6 — возвращается в свою тюрьму; захватчик получает бонус-6.
     if (piece.captor >= 0) {
+      if (isOnline()) { MP.act('redeem', i, slot); return; }
       const captor = ENGINE.redeem(currentPlayer, i);
       used[slot] = true;
       bonusSix[captor] = (bonusSix[captor] || 0) + 1;
@@ -380,6 +380,7 @@ function onBoardClick(seat, i) {
 
 // Обычный ход кубиком из слота `slot`; затем при попадании напротив БМ — выбор.
 function doNormalMove(seat, i, slot) {
+  if (isOnline()) { MP.act('move', i, slot); return; }
   const before = ENGINE.pieces[seat][i].progress;
   const res = ENGINE.applyDie(seat, i, dice[slot]);
   used[slot] = true;
@@ -426,8 +427,8 @@ function resolveExpress(mode) {
 
 // После хода напротив БМ: подсветить кликабельные клетки — БМ (съехать) и
 // текущую клетку фишки (остаться). Нижней плашки нет.
-function offerBM(seat, i) {
-  bmChoice = { seat, i };
+// Подсветить кликабельные клетки выбора БМ: карман БМ (съехать) и текущую клетку (остаться).
+function setBMTargets(seat, i) {
   const ti = ENGINE.trackIndex(seat, i);
   const bm = BM_BY_TRACK[ti];
   const cur = ENGINE.cellOf(seat, i);
@@ -436,12 +437,63 @@ function offerBM(seat, i) {
     { kind: 'bmDivert', seat, i, bm, cell: [bm.r, bm.c] },
     { kind: 'bmStay', seat, i, cell: cur },
   ];
+}
+
+function offerBM(seat, i) {
+  bmChoice = { seat, i };
+  setBMTargets(seat, i);
   redrawBoard();
   setStatusMsg(`${PLAYERS[seat].name}: клик по БМ — съехать, по фишке — остаться`);
 }
 
+// Применить состояние от сервера (онлайн): зеркалим в ENGINE + локальные переменные.
+function applyServerState(s) {
+  for (let seat = 0; seat < 4; seat++) {
+    for (let i = 0; i < 5; i++) {
+      const p = s.pieces[seat][i];
+      const e = ENGINE.pieces[seat][i];
+      e.where = p.where; e.progress = p.progress; e.bm = p.bm; e.captor = p.captor;
+    }
+  }
+  currentPlayer = s.turn;
+  window.__turnSeat = s.turn;
+  dice = s.dice.slice();
+  used = s.used.slice();
+  doubleOne = s.doubleOne;
+  bonusSix = s.bonus.slice();
+  if (!rolling) { // показать актуальные грани (например, при позднем подключении)
+    const e1 = document.getElementById('d1'), e2 = document.getElementById('d2');
+    if (e1 && dice[0]) e1.textContent = FACES[dice[0] - 1];
+    if (e2 && dice[1]) e2.textContent = FACES[dice[1] - 1];
+  }
+  gameOver = (s.phase === 'over');
+  const mine = (MP.mySeat === s.turn);
+  awaitingMove = (s.phase === 'move' && mine);
+  bmChoice = (s.phase === 'bm' && s.bmSeat === MP.mySeat) ? { seat: s.bmSeat, i: s.bmI } : null;
+
+  if (gameOver && s.winner >= 0) {
+    window.__movable = new Set(); window.__targets = [];
+    setStatusMsg(`🏆 ${PLAYERS[s.winner].name} победил!`);
+  } else if (bmChoice) {
+    setBMTargets(bmChoice.seat, bmChoice.i);
+    setStatusMsg(`${PLAYERS[bmChoice.seat].name}: клик по БМ — съехать, по фишке — остаться`);
+  } else if (awaitingMove) {
+    selectedDie = firstUsableSlot();
+    updateHighlights();
+    updateStatus();
+  } else {
+    window.__movable = new Set(); window.__targets = [];
+    updateStatus();
+  }
+  markDice();
+  redrawBoard();
+  refreshControls();
+}
+window.applyServerState = applyServerState;
+
 function resolveBM(divert) {
   if (!bmChoice) return;
+  if (isOnline()) { MP.bm(divert); return; }
   const { seat, i } = bmChoice;
   if (divert) ENGINE.divertToBM(seat, i);
   if (window.DBG) DBG.log(`seat${seat} piece${i} ${divert ? '-> БМ' : 'остаётся на маршруте'}`);
@@ -642,11 +694,16 @@ function refreshControls() {
   let diceLocked = rolling;
 
   if (isOnline()) {
-    const serverRolling = !!MP.rolling;
-    disabled = disabled || serverRolling || !MP.isMyTurn();
-    diceLocked = disabled;
+    const myTurn = MP.mySeat >= 0 && MP.mySeat === currentPlayer;
+    disabled = rolling || !(myTurn && MP.phase === 'idle' && !gameOver);
+    diceLocked = !awaitingMove || rolling;
     if (MP.mySeat < 0) label = 'Зритель';
-    else if (!rolling && !serverRolling && MP.mySeat !== currentPlayer) label = 'Не ваш ход';
+    else if (gameOver) label = 'Игра окончена';
+    else if (!myTurn) label = 'Не ваш ход';
+    else if (MP.phase === 'move') label = 'Ходите фишкой';
+    else if (MP.phase === 'rolling') label = '…';
+    else if (MP.phase === 'bm') label = 'Выбор БМ';
+    else label = 'Бросить';
   } else if (gameOver) {
     disabled = true; diceLocked = true; label = 'Игра окончена';
   } else if (awaitingMove) {

@@ -12,8 +12,11 @@ chown -R www-data:www-data /var/www/prison-escape
 
 echo ">> server -> /opt/prison-escape-server (runs as prison-mp)"
 install -d -o prison-mp -g prison-mp /opt/prison-escape-server/logs
+install -d -o prison-mp -g prison-mp /opt/prison-escape-server/shared
 cp -a "$REPO"/server/index.js "$REPO"/server/package.json "$REPO"/server/package-lock.json \
       /opt/prison-escape-server/
+# Shared game engine/topology — one source of truth with the browser client.
+cp -a "$REPO"/js/topology.js "$REPO"/js/engine.js /opt/prison-escape-server/shared/
 ( cd /opt/prison-escape-server && npm ci --omit=dev )
 chown -R prison-mp:prison-mp /opt/prison-escape-server
 systemctl restart prison-escape-mp

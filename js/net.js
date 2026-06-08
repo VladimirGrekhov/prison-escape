@@ -1,17 +1,17 @@
 // Prison Escape — multiplayer client (Colyseus 0.16).
 //
-// Owns the network connection and translates server state changes into calls
-// into game.js (animateDice / applyTurnFromNet / syncPlayersFromNet). If the
-// server is unreachable, MP.enabled stays false and game.js plays offline.
+// Mirrors the authoritative server state into the local ENGINE + game globals
+// (via applyServerState in game.js) so all rendering/targeting code is reused.
+// If the server is unreachable, MP.enabled stays false and game.js plays offline.
 (function () {
   function computeEndpoint() {
-    if (window.MP_ENDPOINT) return window.MP_ENDPOINT;            // manual override
+    if (window.MP_ENDPOINT) return window.MP_ENDPOINT;
     if (location.protocol === 'file:') return 'ws://localhost:2567';
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-      return 'ws://localhost:2567';                               // local dev
+      return 'ws://localhost:2567';
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${proto}//${location.host}/mp`;                       // nginx proxies /mp -> :2567
+    return `${proto}//${location.host}/mp`;
   }
 
   const MP = window.MP = {
@@ -20,6 +20,7 @@
     room: null,
     mySeat: -1,
     turn: 0,
+    phase: 'idle',
     rolling: false,
     _client: null,
     _token: null,
@@ -27,9 +28,9 @@
     _leaving: false,
 
     isMyTurn() {
-      return this.enabled && this.mySeat >= 0 &&
-             this.mySeat === this.turn && !this.rolling;
+      return this.enabled && this.mySeat >= 0 && this.mySeat === this.turn;
     },
+    canRoll() { return this.isMyTurn() && this.phase === 'idle'; },
     myName() {
       try { return localStorage.getItem('pe-name') || ''; } catch (e) { return ''; }
     },
@@ -37,7 +38,9 @@
       try { localStorage.setItem('pe-name', name); } catch (e) {}
       if (this.room) this.room.send('name', String(name || '').slice(0, 16));
     },
-    sendRoll() { if (this.room) this.room.send('roll'); },
+    roll() { if (this.room) this.room.send('roll'); },
+    act(kind, i, slot) { if (this.room) this.room.send('act', { kind, i, slot }); },
+    bm(divert) { if (this.room) this.room.send('bm', { divert: !!divert }); },
     reset() { if (this.room) this.room.send('reset'); },
     connect,
   };
@@ -64,47 +67,65 @@
     MP._token = room.reconnectionToken;
     MP.enabled = true;
     MP.connected = true;
-    MP._lastSeq = null; // re-adopt seq on (re)connect without replaying a roll
+    MP._lastSeq = null;
     wire(room);
+  }
+
+  // Plain snapshot of the synchronised game state for game.js.
+  function readState(state) {
+    const pieces = [];
+    for (let s = 0; s < 4; s++) {
+      const row = [];
+      for (let i = 0; i < 5; i++) {
+        const p = state.pieces[s * 5 + i];
+        row.push({ where: p.where, progress: p.progress, bm: p.bm, captor: p.captor });
+      }
+      pieces.push(row);
+    }
+    return {
+      turn: state.turn, phase: state.phase,
+      dice: Array.from(state.dice), used: Array.from(state.used),
+      bonus: Array.from(state.bonus), doubleOne: state.doubleOne,
+      winner: state.winner, bmSeat: state.bmSeat, bmI: state.bmI, pieces,
+    };
   }
 
   function wire(room) {
     const $ = Colyseus.getStateCallbacks(room);
 
+    function refreshRoster() {
+      if (typeof syncPlayersFromNet === 'function') syncPlayersFromNet(snapshot(room));
+    }
+    function refreshState() {
+      MP.turn = room.state.turn;
+      MP.phase = room.state.phase;
+      MP.rolling = (room.state.phase === 'rolling');
+      if (typeof applyServerState === 'function') applyServerState(readState(room.state));
+    }
+
     room.onMessage('welcome', (msg) => {
       MP.mySeat = msg.seat;
       window.__mySeat = msg.seat;
-      MP.turn = room.state.turn;
-      if (typeof syncPlayersFromNet === 'function') syncPlayersFromNet(snapshot(room));
-      if (typeof applyTurnFromNet === 'function') applyTurnFromNet(room.state.turn);
+      refreshRoster();
+      refreshState();
       setStatus('online');
     });
 
-    $(room.state).listen('turn', (v) => {
-      MP.turn = v;
-      if (typeof applyTurnFromNet === 'function') applyTurnFromNet(v);
-    });
-
-    $(room.state).listen('rolling', (v) => {
-      MP.rolling = v;
-      if (typeof refreshControls === 'function') refreshControls();
-    });
+    ['turn', 'phase', 'winner', 'doubleOne', 'bmSeat', 'bmI'].forEach((f) =>
+      $(room.state).listen(f, refreshState));
 
     $(room.state).listen('seq', (v) => {
-      // First value after (re)connect: adopt without animating — we might be
-      // joining a game already in progress.
-      if (MP._lastSeq === null) { MP._lastSeq = v; return; }
+      if (MP._lastSeq === null) { MP._lastSeq = v; refreshState(); return; }
       if (v > MP._lastSeq) {
         MP._lastSeq = v;
-        if (typeof animateDice === 'function') {
-          animateDice(room.state.d1, room.state.d2);
-        }
+        if (typeof animateDice === 'function') animateDice(room.state.dice[0], room.state.dice[1]);
       }
+      refreshState();
     });
 
-    const refreshRoster = () => {
-      if (typeof syncPlayersFromNet === 'function') syncPlayersFromNet(snapshot(room));
-    };
+    // Any piece change (moves, captures, ransom) → re-mirror + redraw.
+    $(room.state).pieces.onAdd((p) => { $(p).onChange(refreshState); });
+
     $(room.state).players.onAdd((player) => {
       refreshRoster();
       $(player).onChange(refreshRoster);
@@ -117,10 +138,8 @@
 
   async function handleLeave(code) {
     MP.connected = false;
-    if (MP._leaving) return;            // intentional leave
+    if (MP._leaving) return;
     setStatus('reconnecting');
-
-    // The server holds our seat for a short grace period — try to slip back in.
     for (let attempt = 0; attempt < 6; attempt++) {
       try {
         const room = await MP._client.reconnect(MP._token);
@@ -162,8 +181,6 @@
     };
     el.textContent = labels[state] || '';
     el.dataset.state = state;
-
-    // Show the reset + name controls only when actually online.
     const ctrls = document.getElementById('mp-controls');
     if (ctrls) ctrls.style.display = (state === 'online') ? 'flex' : 'none';
   }
