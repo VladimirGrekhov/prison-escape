@@ -158,7 +158,7 @@ function onRollClick() {
 // Клик по кубику: в фазе хода (офлайн) — выбор кубика; иначе — бросок.
 function onDieClick(idx) {
   if (bmChoice || expressChoice) return;
-  if (!isOnline() && awaitingMove) {
+  if (awaitingMove) {
     if (idx === 2) {
       // бонусный кубик — выбрать первый неиспользованный бонусный слот (>=2)
       const slot = dice.findIndex((d, k) => k >= 2 && !used[k]);
@@ -194,7 +194,7 @@ function startMovePhase(a, b) {
     return;
   }
   awaitingMove = true;
-  selectedDie = firstUsableSlot();
+  selectedDie = -1; // кубик выбирается автоматически по клику по цели
   updateHighlights();
   updateStatus();
   refreshControls();
@@ -248,29 +248,43 @@ function updateHighlights() {
 }
 
 // Клетки-цели для выбранного кубика: куда встанут фишки (для подсветки/кликов).
+// Все клетки-цели по ВСЕМ неиспользованным кубикам (кубик выбирается автоматически
+// по тому, какую цель кликнули). Дубли клеток схлопываются.
 function computeTargets() {
   const out = [];
-  if (!awaitingMove || selectedDie < 0 || used[selectedDie]) return out;
-  const d = dice[selectedDie];
+  if (!awaitingMove) return out;
   const ctx = { doubleOne };
+  const seen = new Set();
+  const add = (t) => {
+    const key = `${t.kind}:${t.i}:${t.cell ? t.cell.join(',') : ''}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(t);
+  };
   let exitAdded = false;
-  ENGINE.legalForDie(currentPlayer, d, ctx).forEach((i) => {
-    const p = ENGINE.pieces[currentPlayer][i];
-    if (p.where === 'prison') {
-      if (!exitAdded) { // выход на «Х» (выкуп — кликом по самой пленной фишке)
-        out.push({ kind: 'exit', seat: currentPlayer, i, slot: selectedDie, cell: X_GRID[currentPlayer] });
-        exitAdded = true;
+  for (let slot = 0; slot < dice.length; slot++) {
+    if (used[slot]) continue;
+    const d = dice[slot];
+    ENGINE.legalForDie(currentPlayer, d, ctx).forEach((i) => {
+      const p = ENGINE.pieces[currentPlayer][i];
+      if (p.where === 'prison') {
+        if (!exitAdded) { // выход на «Х» (выкуп — кликом по самой пленной фишке)
+          add({ kind: 'exit', seat: currentPlayer, i, slot, cell: X_GRID[currentPlayer] });
+          exitAdded = true;
+        }
+      } else if (ENGINE.canMove(currentPlayer, i, d, ctx)) {
+        const dest = ENGINE.destCellOf(currentPlayer, i, d);
+        if (dest) add({ kind: 'move', seat: currentPlayer, i, slot, cell: dest });
+        const bm = ENGINE.bmAfterMove(currentPlayer, i, d);
+        if (bm) add({ kind: 'moveBM', seat: currentPlayer, i, slot, bm, cell: [bm.r, bm.c] });
       }
-    } else if (ENGINE.canMove(currentPlayer, i, d, ctx)) {
-      const dest = ENGINE.destCellOf(currentPlayer, i, d);
-      if (dest) out.push({ kind: 'move', seat: currentPlayer, i, slot: selectedDie, cell: dest });
-    }
-  });
-  if (d === 1) { // экспресс-цели
-    ENGINE.pieces[currentPlayer].forEach((p, i) => {
-      const ti = ENGINE.onExpress(currentPlayer, i);
-      if (ti >= 0) out.push({ kind: 'express', seat: currentPlayer, i, slot: selectedDie, cell: TRACK[EXPRESS_NEXT[ti]] });
     });
+    if (d === 1) {
+      ENGINE.pieces[currentPlayer].forEach((p, i) => {
+        const ti = ENGINE.onExpress(currentPlayer, i);
+        if (ti >= 0) add({ kind: 'express', seat: currentPlayer, i, slot, cell: TRACK[EXPRESS_NEXT[ti]] });
+      });
+    }
   }
   return out;
 }
@@ -288,7 +302,8 @@ function onTargetClick(idx) {
   if (!awaitingMove) return;
   if (t.kind === 'exit') { doExit(t.i, t.slot); return; }
   if (t.kind === 'express') { doExpress(t.seat, t.i, t.slot); return; }
-  doNormalMove(t.seat, t.i, t.slot);
+  if (t.kind === 'moveBM') { doNormalMove(t.seat, t.i, t.slot, true); return; } // ход + съезд на БМ
+  doNormalMove(t.seat, t.i, t.slot, false);
 }
 
 function doExit(i, slot) {
@@ -332,7 +347,7 @@ function markDice() {
 
 // Клик по фишке на доске (вызывается из board.js через window.onBoardClick).
 function onBoardClick(seat, i) {
-  if (isOnline() || !awaitingMove || bmChoice || expressChoice || seat !== currentPlayer) return;
+  if (!awaitingMove || bmChoice || expressChoice || seat !== currentPlayer) return;
 
   const piece = ENGINE.pieces[currentPlayer][i];
 
@@ -379,21 +394,19 @@ function onBoardClick(seat, i) {
 }
 
 // Обычный ход кубиком из слота `slot`; затем при попадании напротив БМ — выбор.
-function doNormalMove(seat, i, slot) {
-  if (isOnline()) { MP.act('move', i, slot); return; }
-  const before = ENGINE.pieces[seat][i].progress;
+function doNormalMove(seat, i, slot, divert) {
+  if (isOnline()) { MP.act('move', i, slot, !!divert); return; }
   const res = ENGINE.applyDie(seat, i, dice[slot]);
+  if (divert && ENGINE.canOfferBM(seat, i)) ENGINE.divertToBM(seat, i);
   used[slot] = true;
   selectedDie = -1;
   playDiceLand();
   if (window.DBG) {
     const cell = ENGINE.cellOf(seat, i);
-    DBG.log(`seat${seat} piece${i} die${dice[slot]}: prog ${before}->` +
-      `${ENGINE.pieces[seat][i].progress} cell ${JSON.stringify(cell)}` +
+    DBG.log(`seat${seat} piece${i} die${dice[slot]}${divert ? '+БМ' : ''}: cell ${JSON.stringify(cell)}` +
       `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}` +
       `${res.finished ? ' HOME' : ''}`);
   }
-  if (ENGINE.canOfferBM(seat, i)) { offerBM(seat, i); return; }
   afterMove();
 }
 
@@ -478,7 +491,7 @@ function applyServerState(s) {
     setBMTargets(bmChoice.seat, bmChoice.i);
     setStatusMsg(`${PLAYERS[bmChoice.seat].name}: клик по БМ — съехать, по фишке — остаться`);
   } else if (awaitingMove) {
-    selectedDie = firstUsableSlot();
+    selectedDie = -1;
     updateHighlights();
     updateStatus();
   } else {
@@ -509,14 +522,10 @@ function afterMove() {
   const win = ENGINE.winner();
   if (win >= 0) { redrawBoard(); finishGame(win); return; }
 
-  const next = firstUsableSlot();
-  if (next >= 0) {
-    selectedDie = next;
-    updateHighlights();
-    updateStatus();
-  } else if (hasUnusedSix() && ENGINE.hasRedeemable(currentPlayer)) {
-    // ходов кубиками нет, но осталась 6 и есть кого выкупить
-    selectedDie = -1;
+  // Остались ли ходы любым неиспользованным кубиком (или выкуп за 6)?
+  const more = firstUsableSlot() >= 0 || (hasUnusedSix() && ENGINE.hasRedeemable(currentPlayer));
+  if (more) {
+    selectedDie = -1; // кубик автоматически по клику по цели
     updateHighlights();
     updateStatus();
   } else {

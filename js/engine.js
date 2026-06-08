@@ -210,6 +210,15 @@
         return cellForProgress(seat, np);
       },
 
+      // Если ход на `die` заканчивается напротив БМ — вернуть этот БМ (иначе null).
+      bmAfterMove(seat, i, die) {
+        const p = this.pieces[seat][i];
+        if (p.where === 'prison' || p.where === 'home') return null;
+        const np = p.progress + die;
+        if (np < 1 || np >= TRACK_MAIN) return null; // БМ только на петле
+        return BM_BY_TRACK[(ENTRY[seat] + np) % TRACK.length] || null;
+      },
+
       canMove(seat, i, die, ctx) {
         ctx = ctx || {};
         const p = this.pieces[seat][i];

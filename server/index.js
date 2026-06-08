@@ -20,6 +20,15 @@ const MAX_SEATS = 4;
 const ROLL_MS = 1500;      // dice "fly" lock (matches client animation)
 const RECONNECT_SEC = 30;
 
+// Серверный лог (онлайн-игры) — в тот же файл, что и клиентский ?debug=1.
+const fs = require("fs");
+const path = require("path");
+const LOG_FILE = path.join(__dirname, "logs", "client.log");
+function serverLog(msg) {
+  try { fs.appendFileSync(LOG_FILE, `[srv ${new Date().toISOString().slice(11, 23)}] ${msg}\n`); }
+  catch (e) { /* ignore */ }
+}
+
 // ---- Synchronised state --------------------------------------------------
 
 class Player extends Schema {
@@ -173,6 +182,7 @@ class GameRoom extends Room {
     this.expressUsed = false;
     this.phase = "rolling";
     this.state.seq++;
+    serverLog(`--- roll seat${this.turn} [${a},${b}]${this.turnDouble ? ' DOUBLE' : ''}${bonus ? ' +bonus6x' + bonus : ''}`);
     this.sync();
 
     if (this._rollTimer) clearTimeout(this._rollTimer);
@@ -196,23 +206,29 @@ class GameRoom extends Room {
       const captor = E.redeem(seat, i);
       if (captor >= 0) this.bonus[captor] = (this.bonus[captor] || 0) + 1;
       this.used[slot] = true;
+      serverLog(`seat${seat} piece${i} REDEEM from seat${captor}`);
       this.afterMove();
     } else if (kind === "exit") {
       if (!E.legalForDie(seat, die, this.ctx()).includes(i) || E.pieces[seat][i].where !== "prison") return;
       E.applyDie(seat, i, die);
       this.used[slot] = true;
+      serverLog(`seat${seat} piece${i} EXIT -> x${seat}`);
       this.afterMove();
     } else if (kind === "express") {
       if (die !== 1 || E.onExpress(seat, i) < 0) return;
       E.expressJump(seat, i);
       this.used[slot] = true;
       this.expressUsed = true;
+      serverLog(`seat${seat} piece${i} EXPRESS`);
       this.afterMove();
-    } else { // move
+    } else { // move (m.bm = сразу съехать на БМ, если ход закончился напротив него)
       if (!E.canMove(seat, i, die, this.ctx())) return;
-      E.applyDie(seat, i, die);
+      const res = E.applyDie(seat, i, die);
+      const divert = !!(m.bm) && E.canOfferBM(seat, i);
+      if (divert) E.divertToBM(seat, i);
       this.used[slot] = true;
-      if (E.canOfferBM(seat, i)) { this.phase = "bm"; this.bm = { seat, i }; this.sync(); return; }
+      serverLog(`seat${seat} piece${i} die${die}${divert ? '+БМ' : ''} -> ${JSON.stringify(E.cellOf(seat, i))}` +
+        `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}${res.finished ? ' HOME' : ''}`);
       this.afterMove();
     }
     this.sync();
@@ -221,6 +237,7 @@ class GameRoom extends Room {
   onBm(client, m) {
     if (this.phase !== "bm" || !this.bm || this.seatOf(client) !== this.bm.seat) return;
     if (m && m.divert) this.engine.divertToBM(this.bm.seat, this.bm.i);
+    serverLog(`seat${this.bm.seat} piece${this.bm.i} ${m && m.divert ? '-> БМ' : 'остаётся'}`);
     this.bm = null;
     this.phase = "move";
     this.afterMove();
@@ -229,7 +246,7 @@ class GameRoom extends Room {
 
   afterMove() {
     const w = this.engine.winner();
-    if (w >= 0) { this.winner = w; this.phase = "over"; return; }
+    if (w >= 0) { this.winner = w; this.phase = "over"; serverLog(`WINNER seat${w}`); return; }
     const next = this.firstUsableSlot();
     if (next >= 0) { this.phase = "move"; return; }
     if (this.hasUnusedSix() && this.engine.hasRedeemable(this.turn)) { this.phase = "move"; return; }
@@ -241,8 +258,9 @@ class GameRoom extends Room {
     this.used = [];
     this.bm = null;
     this.phase = "idle";
-    if (this.turnDouble || this.expressUsed) return; // extra turn, same seat
+    if (this.turnDouble || this.expressUsed) { serverLog(`seat${this.turn} EXTRA turn`); return; }
     this.advanceTurn();
+    serverLog(`turn -> seat${this.turn}`);
   }
 
   advanceTurn() {
@@ -346,10 +364,7 @@ console.log(`Prison Escape multiplayer listening on ws://${host}:${port}`);
 
 // ---- Debug log sink ------------------------------------------------------
 const http = require("http");
-const fs = require("fs");
-const path = require("path");
 const LOG_PORT = Number(process.env.LOG_PORT) || 2568;
-const LOG_FILE = path.join(__dirname, "logs", "client.log");
 const MAX_BODY = 64 * 1024;
 const MAX_FILE = 5 * 1024 * 1024;
 

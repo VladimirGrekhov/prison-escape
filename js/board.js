@@ -92,6 +92,12 @@ let __targetHits = [];  // [{idx,x,y,r}] для попадания клика п
 
 function isOnlineMode() { return !!(window.MP && window.MP.enabled); }
 
+// Цвет подсветки = цвет игрока, чей сейчас ход.
+function turnColor() {
+  const s = window.__turnSeat;
+  return (PLAYERS[s] && PLAYERS[s].color) || '#ffffff';
+}
+
 const PLAYERS = [
   { color: '#e04040', name: 'Игрок 1' },
   { color: '#4040e0', name: 'Игрок 2' },
@@ -208,13 +214,15 @@ function drawPiece(ctx, x, y, color, rad, highlight) {
   const FR = rad || R * 1.2;
 
   if (highlight) {
+    // highlight может быть цветом (строка) — иначе белый.
+    const hc = (typeof highlight === 'string') ? highlight : '#ffffff';
     ctx.save();
     ctx.beginPath();
     ctx.arc(x, y, FR + 4, 0, Math.PI * 2);
-    ctx.shadowColor = '#ffffff';
-    ctx.shadowBlur = 16;
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#ffffff';
+    ctx.shadowColor = hc;
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = hc;
     ctx.stroke();
     ctx.restore();
   }
@@ -268,12 +276,13 @@ function drawCorner(ctx, cx, cy, player, opts) {
   }
 
   if (opts.engineMode && window.ENGINE) {
-    // Фишки в этой тюрьме: свои + пленные (рисуются цветом владельца).
-    const held = ENGINE.heldInPrison(opts.seat);
+    // Фишки в этой тюрьме: свои + пленные (цветом владельца). Пустые места (онлайн)
+    // не показывают фишек.
+    const held = empty ? [] : ENGINE.heldInPrison(opts.seat);
     held.forEach((h, slot) => {
       const off = PIECE_OFFSETS[slot] || [0, 0];
       const x = cx + off[0], y = cy + off[1];
-      const hl = opts.movable && opts.movable.has(`${h.seat},${h.i}`);
+      const hl = (opts.movable && opts.movable.has(`${h.seat},${h.i}`)) ? turnColor() : false;
       drawPiece(ctx, x, y, PLAYERS[h.seat].color, R * 1.2, hl);
       __pieceHits.push({ seat: h.seat, i: h.i, x, y, r: R * 1.4 });
     });
@@ -357,7 +366,8 @@ function drawBoard(canvas) {
     { cx: inX,       cy: TH - inY },
     { cx: TW - inX,  cy: TH - inY },
   ];
-  const engineMode = !isOnlineMode() && !!window.ENGINE;
+  // Движок-отрисовка работает и офлайн, и онлайн (net.js зеркалит состояние в ENGINE).
+  const engineMode = !!window.ENGINE;
   const movable = window.__movable instanceof Set ? window.__movable : null;
   corners.forEach((pos, i) => drawCorner(ctx, pos.cx, pos.cy, PLAYERS[i], {
     highlight: window.__turnSeat === i,
@@ -394,25 +404,31 @@ function drawBoard(canvas) {
 // Центр клетки-цели в canvas-координатах (учёт смещения «Х» и кармана БМ).
 function targetCenter(t) {
   if (t.kind === 'exit') return xCenter(t.seat);
-  if (t.kind === 'bmDivert') return bmCenter(t.bm);
+  if (t.kind === 'bmDivert' || t.kind === 'moveBM') return bmCenter(t.bm);
   return cellCenter(t.cell[0], t.cell[1]);
 }
 function targetRadius(t) {
-  return (t.kind === 'bmDivert' || t.kind === 'exit') ? R * 1.15 : R * 0.92;
+  return (t.kind === 'bmDivert' || t.kind === 'moveBM' || t.kind === 'exit') ? R * 1.15 : R * 0.92;
 }
 
-// Подсветка клеток-целей инверсией цвета (globalCompositeOperation 'difference').
+// Подсветка клеток-целей цветом игрока, чей ход (заливка + кольцо).
 function drawTargets(ctx) {
   const targets = window.__targets;
   if (!targets || !targets.length) return;
+  const col = turnColor();
   ctx.save();
-  ctx.globalCompositeOperation = 'difference';
-  ctx.fillStyle = '#ffffff';
   targets.forEach((t) => {
     const c = targetCenter(t);
+    const rad = targetRadius(t);
     ctx.beginPath();
-    ctx.arc(c.x, c.y, targetRadius(t), 0, Math.PI * 2);
+    ctx.arc(c.x, c.y, rad, 0, Math.PI * 2);
+    ctx.fillStyle = col;
+    ctx.globalAlpha = 0.35;
     ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = col;
+    ctx.stroke();
   });
   ctx.restore();
   targets.forEach((t, idx) => {
@@ -480,7 +496,7 @@ function drawTrackPieces(ctx, movable) {
       const rad = g.list.length > 1 ? R * 0.35 : 0;
       const px = g.x + Math.cos(ang) * rad;
       const py = g.y + Math.sin(ang) * rad;
-      const hl = movable && movable.has(`${p.seat},${p.i}`);
+      const hl = (movable && movable.has(`${p.seat},${p.i}`)) ? turnColor() : false;
       drawPiece(ctx, px, py, PLAYERS[p.seat].color, PR, hl);
       __pieceHits.push({ seat: p.seat, i: p.i, x: px, y: py, r: hitR });
     });

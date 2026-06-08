@@ -39,7 +39,7 @@
       if (this.room) this.room.send('name', String(name || '').slice(0, 16));
     },
     roll() { if (this.room) this.room.send('roll'); },
-    act(kind, i, slot) { if (this.room) this.room.send('act', { kind, i, slot }); },
+    act(kind, i, slot, bm) { if (this.room) this.room.send('act', { kind, i, slot, bm: !!bm }); },
     bm(divert) { if (this.room) this.room.send('bm', { divert: !!divert }); },
     reset() { if (this.room) this.room.send('reset'); },
     connect,
