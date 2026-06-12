@@ -87,8 +87,8 @@ body {
 }
 
 .die {
-  width: 64px;
-  height: 64px;
+  width: 96px;
+  height: 96px;
   background: var(--die-bg);
   color: var(--die-text);
   border-radius: 10px;
@@ -96,7 +96,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 38px;
+  font-size: 90px;
+  line-height: 1;
   cursor: pointer;
   transition: transform 0.1s, background 0.3s, border-color 0.3s, color 0.3s;
   user-select: none;
@@ -169,12 +170,12 @@ body {
 .die.die-bonus[data-count]:not([data-count=""])::after {
   content: attr(data-count);
   position: absolute;
-  top: -6px;
-  right: -6px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 4px;
-  font-size: 13px;
+  top: -8px;
+  right: -8px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 5px;
+  font-size: 15px;
   font-weight: 700;
   color: #2a1000;
   background: #d4a017;
@@ -448,4 +449,119 @@ body.art-mode .die {
     width: 300%;
     min-width: 300%;
   }
+}
+
+/* ================= Полировка кнопок и лейблов ================= */
+
+button { font-family: inherit; }
+
+/* Единый объёмный стиль всех кнопок (включая ранее голую #bot-btn). */
+#roll-btn, #mode-btn, #bot-btn, #log-btn, #art-btn, #reset-btn,
+#bm-prompt button, #express-prompt button, #rules-btn, #rules-close, #theme-btn {
+  background: linear-gradient(180deg, var(--btn-hover), var(--btn-bg));
+  color: var(--btn-text);
+  border: 1px solid rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 2px 5px rgba(0, 0, 0, 0.3);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+
+#roll-btn:hover, #mode-btn:hover, #bot-btn:hover, #log-btn:hover, #art-btn:hover,
+#reset-btn:hover, #bm-prompt button:hover, #express-prompt button:hover,
+#rules-btn:hover, #rules-close:hover, #theme-btn:hover {
+  background: linear-gradient(180deg, var(--btn-hover), var(--btn-bg));
+  filter: brightness(1.15);
+  transform: translateY(-1px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 4px 9px rgba(0, 0, 0, 0.35);
+}
+
+#roll-btn:active, #mode-btn:active, #bot-btn:active, #log-btn:active, #art-btn:active,
+#reset-btn:active, #bm-prompt button:active, #express-prompt button:active,
+#rules-btn:active, #rules-close:active, #theme-btn:active {
+  transform: translateY(0) scale(0.97);
+  filter: brightness(0.95);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+#roll-btn:focus-visible, #mode-btn:focus-visible, #bot-btn:focus-visible,
+#art-btn:focus-visible, #reset-btn:focus-visible {
+  outline: 2px solid var(--wrap-border);
+  outline-offset: 2px;
+}
+
+/* Главная кнопка — крупнее и заметнее. */
+#roll-btn {
+  padding: 14px 38px;
+  font-size: 17px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  border-radius: 12px;
+}
+#roll-btn:disabled {
+  filter: grayscale(0.7);
+  opacity: 0.55;
+  transform: none;
+  box-shadow: none;
+  cursor: default;
+}
+
+/* Кнопки нижней панели — одинаковые капсулы. */
+#mode-btn, #bot-btn, #log-btn, #art-btn {
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 18px;
+}
+
+/* Лейблы. */
+#title {
+  font-size: 28px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+}
+
+#total {
+  font-size: 20px;
+  letter-spacing: 0.5px;
+}
+
+#status {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 26px;
+  border-radius: 22px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Статус подключения: рамка по состоянию (онлайн/переподключение). */
+#mp-status { border: 1px solid rgba(0, 0, 0, 0.15); }
+#mp-status[data-state="online"]       { border-color: rgba(46, 204, 113, 0.65); }
+#mp-status[data-state="connecting"],
+#mp-status[data-state="reconnecting"] { border-color: rgba(241, 196, 15, 0.7); }
+
+#name-input {
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+#name-input:focus {
+  outline: none;
+  border-color: var(--btn-hover);
+  box-shadow: 0 0 6px var(--btn-hover);
+}
+
+/* Арт-режим: кнопки и лейблы в тон доски (дерево/латунь). */
+body.art-mode #roll-btn, body.art-mode #mode-btn, body.art-mode #bot-btn,
+body.art-mode #log-btn, body.art-mode #art-btn, body.art-mode #reset-btn,
+body.art-mode #rules-btn, body.art-mode #rules-close, body.art-mode #theme-btn,
+body.art-mode #bm-prompt button, body.art-mode #express-prompt button {
+  background: linear-gradient(180deg, #7a6347, #46321e);
+  color: #f1e3c2;
+  border-color: #241404;
+}
+body.art-mode #title, body.art-mode #total, body.art-mode #corner-label { color: #e8d9b8; }
+body.art-mode #status, body.art-mode #mp-status {
+  background: rgba(0, 0, 0, 0.4);
+  color: #d9c9a3;
+  border-color: rgba(241, 227, 194, 0.25);
 }

@@ -9,3 +9,6 @@ npm-debug.log*
 # Editor/OS cruft
 .DS_Store
 *.swp
+
+# Рабочие скриншоты для обсуждения дизайна (не для репозитория)
+screenshots/

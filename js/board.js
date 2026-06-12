@@ -83,6 +83,17 @@ const THEMES = {
     barStroke:  '#34304a',
     barLines:   '#6b6880',
   },
+  art: { // кружки поверх кирпичной подложки — как на исходной доске
+    bg:         'transparent',
+    ring:       '#241404',
+    cell:       '#f7f3ea',
+    bm:         '#d8c450',
+    cellStroke: '#4a3018',
+    ink:        '#241000',
+    barBody:    '#2a1408',
+    barStroke:  '#5a3a18',
+    barLines:   '#c9c9c9',
+  },
 };
 
 let activeTheme = THEMES.day;
@@ -102,12 +113,12 @@ function turnColor() {
 const ART_IMG = new Image();
 let artReady = false;
 ART_IMG.onload = () => { artReady = true; if (boardCanvas) drawBoard(boardCanvas); };
-ART_IMG.src = 'img/board-art.jpg';
+ART_IMG.src = 'img/board-art2.jpg'; // подложка без кружков — клетки рисует код
 // Обрезка картинки под доску (bbox) — тюнится визуально, чтобы крест совпал.
-const ART_CROP = { sx: 16, sy: 208, sw: 1336, sh: 1340 };
+// Откалибровано по центрам кружков картинки (МНК по 92 кружкам).
+const ART_CROP = { sx: 34, sy: 221, sw: 1312, sh: 1318 };
 // Центры окошек-камер (доли холста) для фишек в тюрьме.
-const ART_WIN = [[0.275, 0.257], [0.731, 0.263], [0.262, 0.720], [0.725, 0.718]];
-const ART_PIECE_OFFS = [[-0.16, -0.16], [0.16, -0.16], [0, 0], [-0.16, 0.16], [0.16, 0.16]];
+const ART_WIN = [[0.266, 0.251], [0.731, 0.258], [0.253, 0.722], [0.725, 0.720]];
 
 const PLAYERS = [
   { color: '#e04040', name: 'Игрок 1' },
@@ -141,13 +152,18 @@ function boardPy(r) { return MARGIN + OFF + r * SP + R; }
 function viewRot() { return ((window.__viewRot | 0) % 4 + 4) % 4; }
 
 // Нарисовать текст прямо (с компенсацией поворота доски).
-function uprightText(ctx, label, x, y) {
+// stroke=true — с обводкой (для читаемости на фото в арт-режиме).
+function uprightText(ctx, label, x, y, stroke) {
   const rot = viewRot();
-  if (!rot) { ctx.fillText(label, x, y); return; }
+  const draw = (xx, yy) => {
+    if (stroke) ctx.strokeText(label, xx, yy);
+    ctx.fillText(label, xx, yy);
+  };
+  if (!rot) { draw(x, y); return; }
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(-rot * Math.PI / 2);
-  ctx.fillText(label, 0, 0);
+  draw(0, 0);
   ctx.restore();
 }
 
@@ -287,32 +303,51 @@ function drawCorner(ctx, cx, cy, player, opts) {
   if (empty) ctx.globalAlpha = 0.32;   // dim unoccupied seats in online mode
 
   const half = art ? CW * 0.5 : CW * 0.45;
-  ctx.beginPath();
-  ctx.roundRect(cx - half, cy - half, half * 2, half * 2, 8);
-  if (!art) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill(); }
-
-  if (highlight) {
-    ctx.save();
-    ctx.shadowColor = player.color;
-    ctx.shadowBlur = 18;
-    ctx.strokeStyle = player.color;
-    ctx.lineWidth = 4;
-    ctx.stroke();
-    ctx.restore();
-  } else if (!art) {
-    ctx.strokeStyle = player.color;
-    ctx.lineWidth = 2;
-    ctx.stroke();
+  // В арт-режиме квадраты углов не рисуются вовсе — окна-камеры даёт картинка.
+  if (!art) {
+    ctx.beginPath();
+    ctx.roundRect(cx - half, cy - half, half * 2, half * 2, 8);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fill();
+    if (highlight) {
+      ctx.save();
+      ctx.shadowColor = player.color;
+      ctx.shadowBlur = 18;
+      ctx.strokeStyle = player.color;
+      ctx.lineWidth = 4;
+      ctx.stroke();
+      ctx.restore();
+    } else {
+      ctx.strokeStyle = player.color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
   }
 
   const pr = art ? R * 0.72 : R * 1.2;
   if (opts.engineMode && window.ENGINE) {
     // Фишки в этой тюрьме: свои + пленные (цветом владельца). Пустые места — без фишек.
     const held = empty ? [] : ENGINE.heldInPrison(opts.seat);
+    // Арт: фишки колонкой вдоль внешнего края окна (не на портрете). Сторона
+    // и вертикаль — в экранных координатах, с учётом поворота вида.
+    const rot = viewRot();
+    let colX = 0;
+    const rotA = -rot * Math.PI / 2;
+    if (art) {
+      let c = opts.seat; // экранный угол после поворота: 0 TL, 1 TR, 2 BL, 3 BR
+      for (let t = 0; t < rot; t++) c = { 0: 1, 1: 3, 3: 2, 2: 0 }[c];
+      colX = (c === 1 || c === 3) ? CW * 0.64 : -CW * 0.64;
+    }
+    const step = Math.min(0.24, held.length > 1 ? 1.0 / (held.length - 1) : 1) * CW;
     held.forEach((h, slot) => {
-      const off = art
-        ? [(ART_PIECE_OFFS[slot] || [0, 0])[0] * CW, (ART_PIECE_OFFS[slot] || [0, 0])[1] * CW]
-        : (PIECE_OFFSETS[slot] || [0, 0]);
+      let off;
+      if (art) {
+        const dy = (slot - (held.length - 1) / 2) * step;
+        off = [colX * Math.cos(rotA) - dy * Math.sin(rotA),
+               colX * Math.sin(rotA) + dy * Math.cos(rotA)];
+      } else {
+        off = PIECE_OFFSETS[slot] || [0, 0];
+      }
       const x = cx + off[0], y = cy + off[1];
       const hl = (opts.movable && opts.movable.has(`${h.seat},${h.i}`)) ? turnColor() : false;
       drawPiece(ctx, x, y, PLAYERS[h.seat].color, pr, hl);
@@ -324,12 +359,30 @@ function drawCorner(ctx, cx, cy, player, opts) {
     });
   }
 
-  if (!art) {
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  // Имя игрока. Обычный режим — внутри квадрата, под фишками. Арт — на
+  // кирпичах: над верхними окнами и под нижними (по разметке). Смещение
+  // считается в экранных координатах с учётом поворота вида.
+  {
+    let d = half * 0.78;
+    if (art) {
+      let c = opts.seat; // экранный угол после поворота: 0 TL, 1 TR, 2 BL, 3 BR
+      const rot2 = viewRot();
+      for (let t = 0; t < rot2; t++) c = { 0: 1, 1: 3, 3: 2, 2: 0 }[c];
+      d = (c === 0 || c === 1) ? -CW * 0.77 : CW * 0.855;
+    }
+    const a = -viewRot() * Math.PI / 2;
+    const nx = cx - d * Math.sin(a);
+    const ny = cy + d * Math.cos(a);
     ctx.font = `bold ${R * 1.1}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    uprightText(ctx, empty ? 'свободно' : player.name, cx, cy + CW * 0.38);
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    if (art) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+    }
+    uprightText(ctx, empty ? 'свободно' : player.name, nx, ny, art);
   }
 
   ctx.restore();
@@ -345,7 +398,13 @@ function drawBoard(canvas) {
   __pieceHits = [];
   __targetHits = [];
   const ctx = canvas.getContext('2d');
-  // Поворот вида: рисуем всю доску повернутой вокруг центра (свой угол внизу).
+  const art = window.__artMode && artReady;
+  if (art) {
+    // Картинка — статичный фон (не вращается, люди всегда вверх головой):
+    // доска симметричная, кружки совпадают при любом повороте вида.
+    ctx.drawImage(ART_IMG, ART_CROP.sx, ART_CROP.sy, ART_CROP.sw, ART_CROP.sh, 0, 0, TW, TH);
+  }
+  // Поворот вида: игровые элементы рисуются повернутыми (свой угол внизу).
   const __rot = viewRot();
   if (__rot) {
     ctx.save();
@@ -353,17 +412,16 @@ function drawBoard(canvas) {
     ctx.rotate(__rot * Math.PI / 2);
     ctx.translate(-TW / 2, -TH / 2);
   }
-  const art = window.__artMode && artReady;
-  if (art) {
-    // Картинка как сама доска (обрезана ровно по доске).
-    ctx.drawImage(ART_IMG, ART_CROP.sx, ART_CROP.sy, ART_CROP.sw, ART_CROP.sh, 0, 0, TW, TH);
-  } else if (!window.__artMode) {
+  if (!art && !window.__artMode) {
     ctx.fillStyle = activeTheme.bg;
     ctx.fillRect(0, 0, TW, TH);
   }
 
-  // Наш нарисованный крест/клетки/стрелки — только в обычном режиме (в арте их даёт картинка).
-  if (!art) {
+  // Клетки/стрелки/«Х»/БМ рисуем всегда: на новой арт-подложке кружков нет,
+  // их даёт код — поэтому они всегда точно по игровой сетке.
+  const __savedTheme = activeTheme;
+  if (art) activeTheme = THEMES.art;
+  {
     for (let r = 0; r < GRID; r++) {
       for (let c = 0; c < GRID; c++) {
         const key = `${r},${c}`;
@@ -402,6 +460,7 @@ function drawBoard(canvas) {
     });
     ctx.restore();
   }
+  activeTheme = __savedTheme;
 
   // Угловые зоны / окошки-камеры с фишками в тюрьме.
   const QCELL = 3.4;
