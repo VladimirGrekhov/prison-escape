@@ -136,6 +136,21 @@ function inCross(r, c) {
 function boardPx(c) { return MARGIN + OFF + c * SP + R; }
 function boardPy(r) { return MARGIN + OFF + r * SP + R; }
 
+// Поворот вида (0..3 четвертьоборота по часовой): онлайн свой угол показывается
+// внизу, как у Игрока 4. Вся доска рисуется повернутой, тексты — прямо.
+function viewRot() { return ((window.__viewRot | 0) % 4 + 4) % 4; }
+
+// Нарисовать текст прямо (с компенсацией поворота доски).
+function uprightText(ctx, label, x, y) {
+  const rot = viewRot();
+  if (!rot) { ctx.fillText(label, x, y); return; }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-rot * Math.PI / 2);
+  ctx.fillText(label, 0, 0);
+  ctx.restore();
+}
+
 function drawCircle(ctx, x, y, label, white, rad = R, labelColor) {
   ctx.beginPath();
   ctx.arc(x, y, rad + 2, 0, Math.PI * 2);
@@ -155,7 +170,7 @@ function drawCircle(ctx, x, y, label, white, rad = R, labelColor) {
     ctx.font = `bold ${String(label).length > 2 ? rad * 0.64 : rad * 0.82}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, x, y);
+    uprightText(ctx, label, x, y);
   }
 }
 
@@ -314,7 +329,7 @@ function drawCorner(ctx, cx, cy, player, opts) {
     ctx.font = `bold ${R * 1.1}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(empty ? 'свободно' : player.name, cx, cy + CW * 0.38);
+    uprightText(ctx, empty ? 'свободно' : player.name, cx, cy + CW * 0.38);
   }
 
   ctx.restore();
@@ -330,6 +345,14 @@ function drawBoard(canvas) {
   __pieceHits = [];
   __targetHits = [];
   const ctx = canvas.getContext('2d');
+  // Поворот вида: рисуем всю доску повернутой вокруг центра (свой угол внизу).
+  const __rot = viewRot();
+  if (__rot) {
+    ctx.save();
+    ctx.translate(TW / 2, TH / 2);
+    ctx.rotate(__rot * Math.PI / 2);
+    ctx.translate(-TW / 2, -TH / 2);
+  }
   const art = window.__artMode && artReady;
   if (art) {
     // Картинка как сама доска (обрезана ровно по доске).
@@ -407,6 +430,8 @@ function drawBoard(canvas) {
   if (engineMode) drawKarzer(ctx, movable);
 
   drawDebug(ctx);
+
+  if (__rot) ctx.restore();
 }
 
 // Карцер — центральная клетка «ц». Сюда попадает фишка, которая могла срубить,
@@ -539,8 +564,17 @@ function drawTrackPieces(ctx, movable) {
 function setupBoardInput(canvas) {
   canvas.addEventListener('click', (e) => {
     const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    let x = (e.clientX - rect.left) * (canvas.width / rect.width);
+    let y = (e.clientY - rect.top) * (canvas.height / rect.height);
+    // Поворот вида: клик переводим обратно в неповернутые координаты доски.
+    const rot = viewRot();
+    if (rot) {
+      const cx = canvas.width / 2, cy = canvas.height / 2;
+      const a = -rot * Math.PI / 2;
+      const dx = x - cx, dy = y - cy;
+      x = cx + dx * Math.cos(a) - dy * Math.sin(a);
+      y = cy + dx * Math.sin(a) + dy * Math.cos(a);
+    }
 
     // 1) клетка-цель
     if (typeof window.onTargetClick === 'function') {

@@ -108,6 +108,8 @@
     room.onMessage('welcome', (msg) => {
       MP.mySeat = msg.seat;
       window.__mySeat = msg.seat;
+      // Свой угол — внизу (как у Игрока 4): поворот вида по своему месту.
+      window.__viewRot = ({ 0: 2, 1: 1, 2: 3 })[msg.seat] || 0;
       refreshRoster();
       refreshState();
       setStatus('online');
@@ -157,6 +159,8 @@
     }
     MP.enabled = false;
     setStatus('offline');
+    window.__viewRot = 0; // офлайн — обычная ориентация доски
+    if (typeof redrawBoard === 'function') redrawBoard();
     if (typeof refreshControls === 'function') refreshControls();
   }
 
