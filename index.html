@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=55">
+  <link rel="stylesheet" href="css/style.css?v=67">
 </head>
 <body>
 
@@ -40,6 +40,7 @@
     <div id="mp-bar">
       <span id="mp-status">🔌 Локальная игра</span>
       <button id="mode-btn">🔌 Играть локально</button>
+      <button id="bot-btn">🤖 Бот</button>
       <button id="art-btn">🎨 Арт</button>
       <button id="log-btn" style="display:none">⬇ Лог</button>
       <div id="mp-controls">
@@ -92,11 +93,12 @@
         <ul>
           <li>Любая фишка противника <b>на пути</b> твоего хода (кроме стоящих на БМ/Х) срубается и попадает в плен — в <b>твою</b> тюрьму.</li>
           <li>Чтобы выкупить свою пленную фишку, выбрось <b>6</b> и кликни её — она вернётся в свою тюрьму (6 тратится на выкуп).</li>
-          <li>Тот, у кого выкупили фишку, получает в свой ход бонусные <b>6</b> шагов.</li>
+          <li>Тот, у кого выкупили фишку, получает бонусные <b>6</b> шагов: в начале своего хода он сначала ходит бонусной шестёркой (до броска), а потом бросает кубики.</li>
         </ul>
 
         <h3>Финиш</h3>
         <ul>
+          <li>В домашнюю дорожку можно попасть только через свой <b>вход</b> (белая клетка начала маршрута): надо точным ходом остановиться на ней — пройти мимо нельзя.</li>
           <li>Чтобы зайти домой, нужно выбросить точное число.</li>
           <li>Побеждает тот, кто первым привёл все 5 фишек домой.</li>
         </ul>
@@ -104,14 +106,15 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=55"></script>
-  <script src="js/topology.js?v=55"></script>
-  <script src="js/board.js?v=55"></script>
-  <script src="js/engine.js?v=55"></script>
-  <script src="js/debug.js?v=55"></script>
-  <script src="js/sound.js?v=55"></script>
-  <script src="js/game.js?v=55"></script>
-  <script src="js/net.js?v=55"></script>
+  <script src="js/colyseus.js?v=67"></script>
+  <script src="js/topology.js?v=67"></script>
+  <script src="js/board.js?v=67"></script>
+  <script src="js/engine.js?v=67"></script>
+  <script src="js/debug.js?v=67"></script>
+  <script src="js/sound.js?v=67"></script>
+  <script src="js/game.js?v=67"></script>
+  <script src="js/net.js?v=67"></script>
+  <script src="js/bot.js?v=67"></script>
 
 </body>
 </html>

@@ -403,7 +403,33 @@ function drawBoard(canvas) {
   // Фишки на маршруте/в дорожке (только в офлайн-режиме движка).
   if (engineMode) drawTrackPieces(ctx, movable);
 
+  // Карцер: наказанные фишки сидят в центре доски (на решётке).
+  if (engineMode) drawKarzer(ctx, movable);
+
   drawDebug(ctx);
+}
+
+// Карцер — центральная клетка «ц». Сюда попадает фишка, которая могла срубить,
+// но не срубила; по дублю 1 подсвеченную фишку можно забрать кликом (см. engine).
+function drawKarzer(ctx, movable) {
+  const held = [];
+  for (let s = 0; s < ENGINE.SEATS; s++) {
+    for (let i = 0; i < ENGINE.PER_SEAT; i++) {
+      if (ENGINE.pieces[s][i].where === 'karzer') held.push({ seat: s, i });
+    }
+  }
+  if (!held.length) return;
+  const c = cellCenter(centerR, centerC);
+  const PR = R * 0.55;
+  held.forEach((h, n) => {
+    const ang = held.length > 1 ? (n / held.length) * Math.PI * 2 : 0;
+    const rad = held.length > 1 ? R * 0.75 : 0;
+    const x = c.x + Math.cos(ang) * rad;
+    const y = c.y + Math.sin(ang) * rad;
+    const hl = (movable && movable.has(`${h.seat},${h.i}`)) ? turnColor() : false;
+    drawPiece(ctx, x, y, PLAYERS[h.seat].color, PR, hl);
+    __pieceHits.push({ seat: h.seat, i: h.i, x, y, r: PR + 6 });
+  });
 }
 
 // Центр клетки-цели в canvas-координатах (учёт смещения «Х» и кармана БМ).
@@ -475,7 +501,7 @@ function drawTrackPieces(ctx, movable) {
   for (let s = 0; s < ENGINE.SEATS; s++) {
     for (let i = 0; i < ENGINE.PER_SEAT; i++) {
       const p = ENGINE.pieces[s][i];
-      if (p.where === 'prison' || p.where === 'home') continue;
+      if (p.where === 'prison') continue;
       const onX = (p.where === 'track' && p.progress === 0); // стоит на кружке «Х»
       let pos, big = onX;
       if (onX) {

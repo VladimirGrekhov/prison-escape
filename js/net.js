@@ -87,7 +87,8 @@
       turn: state.turn, phase: state.phase,
       dice: Array.from(state.dice), used: Array.from(state.used),
       bonus: Array.from(state.bonus), doubleOne: state.doubleOne,
-      winner: state.winner, bmSeat: state.bmSeat, bmI: state.bmI, pieces,
+      winner: state.winner, bmSeat: state.bmSeat, bmI: state.bmI,
+      karzerSeat: state.karzerSeat, karzerI: state.karzerI, pieces,
     };
   }
 
@@ -115,7 +116,7 @@
     // rev меняется на каждый серверный sync() → гарантированная перерисовка,
     // даже если поменялись только pieces/used (их onChange не всегда срабатывает).
     $(room.state).listen('rev', refreshState);
-    ['turn', 'phase', 'winner', 'doubleOne', 'bmSeat', 'bmI'].forEach((f) =>
+    ['turn', 'phase', 'winner', 'doubleOne', 'bmSeat', 'bmI', 'karzerSeat', 'karzerI'].forEach((f) =>
       $(room.state).listen(f, refreshState));
 
     $(room.state).listen('seq', (v) => {

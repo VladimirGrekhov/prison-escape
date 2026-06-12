@@ -66,6 +66,8 @@ class GameState extends Schema {
     this.winner = -1;
     this.bmSeat = -1;               // pending БМ divert decision
     this.bmI = -1;
+    this.karzerSeat = -1;           // дубль 1: кого можно забрать из карцера кликом
+    this.karzerI = -1;
     this.seq = 0;                   // bumps on each roll -> dice animation
     this.rev = 0;                   // bumps on EVERY sync -> guaranteed client refresh
   }
@@ -82,6 +84,8 @@ defineTypes(GameState, {
   winner: "int8",
   bmSeat: "int8",
   bmI: "int8",
+  karzerSeat: "int8",
+  karzerI: "int8",
   seq: "uint32",
   rev: "uint32",
 });
@@ -106,6 +110,10 @@ class GameRoom extends Room {
     this.turnSix = false;
     this.expressJumps = 0;
     this.turnCaptures = 0;          // срубил в этом броске → доп. ход (не суммируется)
+    this.bonusPhase = false;        // бонусные «6» ходятся ДО броска кубиков
+    this.carryCaptures = 0;         // срубания бонусной фазы → доп. ход после броска
+    this.rollCaptureChances = [];   // фишки, которые могли срубить этим броском (карцер)
+    this.karzerHandled = false;     // освобождение по дублю 1 уже сработало в этом броске
     this.bm = null;
     this.winner = -1;
     this.sync();
@@ -167,13 +175,39 @@ class GameRoom extends Room {
   }
   hasAnyAction() {
     if (this.engine.hasAnyMove(this.turn, this.dice, this.ctx())) return true;
-    return this.hasUnusedSix() && this.engine.hasRedeemable(this.turn);
+    if (this.hasUnusedSix() && this.engine.hasRedeemable(this.turn)) return true;
+    return !!this.karzerOffer();
+  }
+  // Дубль 1: кого сейчас можно забрать из карцера кликом ({seat,i} | null).
+  karzerOffer() {
+    if (!this.doubleOne || this.karzerHandled || this.bonusPhase) return null;
+    return this.engine.karzerEligible(this.turn);
   }
 
   onRoll(client, m) {
     if (this.seatOf(client) !== this.turn) return;
     if (this.phase !== "idle" || this.winner >= 0) return;
     if (!this.occupiedSeats().has(this.turn)) return;
+
+    // Бонусные «6» за выкуп ходятся ДО броска (базовые слоты помечены занятыми).
+    if (this.bonus[this.turn] > 0) {
+      const n = this.bonus[this.turn];
+      this.bonus[this.turn] = 0;
+      this.dice = [0, 0];
+      this.used = [true, true];
+      for (let k = 0; k < n; k++) { this.dice.push(6); this.used.push(false); }
+      this.doubleOne = false; this.turnDouble = false;
+      this.expressJumps = 0; this.turnCaptures = 0;
+      if (this.hasAnyAction()) {
+        this.bonusPhase = true;
+        this.phase = "move";
+        serverLog(`--- bonus6 x${n} seat${this.turn} (до броска)`);
+        this.sync();
+        return;
+      }
+      serverLog(`seat${this.turn} bonus6 x${n}: нет ходов, сгорают`);
+      this.dice = []; this.used = [];
+    }
 
     let a = 1 + Math.floor(Math.random() * 6);
     let b = 1 + Math.floor(Math.random() * 6);
@@ -182,17 +216,19 @@ class GameRoom extends Room {
     if (forced.length) { a = forced[0]; if (forced.length > 1) b = forced[1]; }
     this.dice = [a, b];
     this.used = [false, false];
-    const bonus = this.bonus[this.turn] || 0;
-    for (let k = 0; k < bonus; k++) { this.dice.push(6); this.used.push(false); }
-    this.bonus[this.turn] = 0;
     this.turnDouble = (a === b);
     this.doubleOne = (a === 1 && b === 1);
     this.turnSix = (a === 6 || b === 6); // выпала 6 → доп. ход
     this.expressJumps = 0;
-    this.turnCaptures = 0;
+    this.turnCaptures = this.carryCaptures || 0; // срубания бонусной фазы → доп. ход
+    this.carryCaptures = 0;
     this.phase = "rolling";
     this.state.seq++;
-    serverLog(`--- roll seat${this.turn} [${a},${b}]${this.turnDouble ? ' DOUBLE' : ''}${bonus ? ' +bonus6x' + bonus : ''}${forced.length ? ' FORCED' : ''}`);
+    serverLog(`--- roll seat${this.turn} [${a},${b}]${this.turnDouble ? ' DOUBLE' : ''}${forced.length ? ' FORCED' : ''}`);
+    // Дубль 1: фишку из карцера можно забрать кликом (не автоматически).
+    this.karzerHandled = false;
+    // Кто мог бы срубить этим броском (правило карцера на конце хода).
+    this.rollCaptureChances = this.engine.captureChances(this.turn, this.dice, this.used, this.ctx());
     this.sync();
 
     if (this._rollTimer) clearTimeout(this._rollTimer);
@@ -213,6 +249,7 @@ class GameRoom extends Room {
     this.doubleOne = (f[0] === 1 && f[1] === 1);
     this.turnSix = (f[0] === 6 || f[1] === 6);
     serverLog(`--- DBG set dice seat${this.turn} [${f[0]},${f[1]}]`);
+    this.rollCaptureChances = this.engine.captureChances(this.turn, this.dice, this.used, this.ctx());
     if (!this.hasAnyAction()) this.endTurn();
     this.sync();
   }
@@ -220,6 +257,19 @@ class GameRoom extends Room {
   onAct(client, m) {
     if (this.seatOf(client) !== this.turn || this.phase !== "move" || !m) return;
     const i = m.i | 0, slot = m.slot | 0, kind = m.kind;
+
+    // Дубль 1: забрать фишку из карцера. Забор тратит кубики этого броска.
+    if (kind === "karzer") {
+      if (!this.karzerOffer()) return;
+      this.karzerHandled = true;
+      const rel = this.engine.karzerOnDoubleOne(this.turn);
+      if (rel) serverLog(`seat${this.turn} КАРЦЕР дубль1: seat${rel.seat} piece${rel.i} ${rel.kind === 'home' ? 'домой' : 'в плен'}`);
+      this.used = this.used.map(() => true); // забор тратит кубики
+      this.afterMove();
+      this.sync();
+      return;
+    }
+
     if (slot < 0 || slot >= this.dice.length || this.used[slot]) return;
     const die = this.dice[slot];
     const seat = this.turn;
@@ -289,10 +339,32 @@ class GameRoom extends Room {
     const next = this.firstUsableSlot();
     if (next >= 0) { this.phase = "move"; return; }
     if (this.hasUnusedSix() && this.engine.hasRedeemable(this.turn)) { this.phase = "move"; return; }
+    if (this.bonusPhase) { // бонусные 6 сыграны — обычный бросок, ход не переходит
+      this.bonusPhase = false;
+      this.carryCaptures = this.turnCaptures; this.turnCaptures = 0;
+      this.dice = []; this.used = [];
+      this.phase = "idle";
+      serverLog(`seat${this.turn} bonus6 done — бросай`);
+      return;
+    }
     this.endTurn();
   }
 
   endTurn() {
+    // Карцер: была возможность срубить, но за весь бросок никого не срубил —
+    // первая из фишек, которая могла срубить, отправляется в карцер.
+    if (this.winner < 0 && this.turnCaptures === 0 && this.rollCaptureChances.length) {
+      const j = this.rollCaptureChances.find((i) => {
+        const w = this.engine.pieces[this.turn][i].where;
+        return w === "track" || w === "lane";
+      });
+      if (j !== undefined) {
+        this.engine.sendToKarzer(this.turn, j);
+        serverLog(`seat${this.turn} piece${j} -> КАРЦЕР (мог срубить, не срубил)`);
+      }
+    }
+    this.rollCaptureChances = [];
+
     this.dice = [];
     this.used = [];
     this.bm = null;
@@ -341,6 +413,9 @@ class GameRoom extends Room {
     this.state.winner = this.winner;
     this.state.bmSeat = this.bm ? this.bm.seat : -1;
     this.state.bmI = this.bm ? this.bm.i : -1;
+    const ko = (this.phase === "move") ? this.karzerOffer() : null;
+    this.state.karzerSeat = ko ? ko.seat : -1;
+    this.state.karzerI = ko ? ko.i : -1;
     this.state.rev = (this.state.rev + 1) >>> 0; // гарантированный триггер refresh у клиента
   }
 
@@ -349,7 +424,9 @@ class GameRoom extends Room {
     this.engine.newGame();
     this.dice = []; this.used = []; this.bonus = [0, 0, 0, 0];
     this.doubleOne = false; this.turnDouble = false; this.turnSix = false; this.expressJumps = 0;
-    this.turnCaptures = 0;
+    this.turnCaptures = 0; this.bonusPhase = false; this.carryCaptures = 0;
+    this.rollCaptureChances = [];
+    this.karzerHandled = false;
     this.bm = null; this.winner = -1; this.phase = "idle";
     const occ = [...this.occupiedSeats()].sort((x, y) => x - y);
     this.turn = occ.length ? occ[0] : 0;

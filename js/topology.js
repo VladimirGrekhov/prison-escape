@@ -40,15 +40,23 @@
 
   const TRACK_MAIN = TRACK.length;
   const LANE_LEN = HOME_LANE[0].length;
-  // progress 0 = вход (рисуется на «Х»); далее петля; затем дорожка.
-  const MAX_PROGRESS = TRACK_MAIN + LANE_LEN - 1;
+  // progress 0 = вход (рисуется на «Х»); далее петля; progress 56 = снова вход
+  // (обязательная остановка перед домом); затем дорожка.
+  const MAX_PROGRESS = TRACK_MAIN + LANE_LEN;
+
+  // Конец дома — индекс клетки дорожки (везде «V», h*.4), дальше которой фишка
+  // не идёт. Перескакивать нельзя: ход, уводящий дальше, запрещён; точное
+  // попадание = финиш. Клетка-стрелка и центр — декоративные.
+  const HOME_END = [4, 4, 4, 4];
+  const maxProgressFor = (seat) => TRACK_MAIN + 1 + HOME_END[seat];
 
   // Кружок «Х» (вход в дом) каждого места — стартовая позиция (progress 0).
   const X_GRID = [[2, 9], [9, 18], [11, 2], [18, 11]];
 
-  // Безопасные клетки (нельзя срубить): входы + кружки «Х» + карманы БМ (ниже).
+  // Безопасные клетки (нельзя срубить): кружки «Х» + карманы БМ (ниже).
+  // Входы — обычные клетки маршрута, на них рубится как везде (фишку на «Х»
+  // защищает не клетка, а проверка progress 0 в движке).
   const SAFE = new Set([
-    '3,10', '10,17', '17,10', '10,3',
     '2,9', '9,18', '18,11', '11,2',
   ]);
 
@@ -77,7 +85,7 @@
 
   return {
     TRACK, TRACK_KEY, trackIndexOf, ENTRY, HOME_LANE,
-    TRACK_MAIN, LANE_LEN, MAX_PROGRESS, X_GRID, SAFE,
+    TRACK_MAIN, LANE_LEN, MAX_PROGRESS, HOME_END, maxProgressFor, X_GRID, SAFE,
     BM_CELLS, BM_BY_TRACK, EXPRESS, EXPRESS_NEXT, EXPRESS_ACROSS,
   };
 });
