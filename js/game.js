@@ -13,10 +13,12 @@ let selectedDie = -1;          // индекс выбранного кубика
 let awaitingMove = false;
 let turnDouble = false;
 let doubleOne = false;
+let turnSix = false;
+let turnCaptures = 0;          // срубил в этом броске → доп. ход (не суммируется)
 let gameOver = false;
 let bmChoice = null;           // {seat,i} — ждём выбор «съехать на БМ или остаться»
 let expressChoice = null;      // {seat,i,slot} — ждём выбор «экспресс или обычный +1»
-let expressUsed = false;       // экспресс в этом ходу → дополнительный ход
+let expressJumps = 0;          // сколько экспресс-прыжков в этом броске (каждый = +доп. ход)
 let bonusSix = [0, 0, 0, 0];   // накопленные бонусные «6» по местам (за выкупленных пленных)
 
 function rnd() { return 1 + Math.floor(Math.random() * 6); }
@@ -30,6 +32,16 @@ function init() {
   updateStatus();
 
   document.getElementById('roll-btn').onclick = onRollClick;
+  // Горячая клавиша: пробел — бросок кубиков.
+  document.addEventListener('keydown', (e) => {
+    if (e.code !== 'Space' || e.repeat) return;
+    const t = e.target;
+    if (t && /INPUT|TEXTAREA|SELECT|BUTTON/.test(t.tagName)) return;
+    const rules = document.getElementById('rules-overlay');
+    if (rules && !rules.classList.contains('hidden')) return;
+    e.preventDefault(); // не скроллить страницу
+    onRollClick();
+  });
   document.getElementById('d1').onclick = () => onDieClick(0);
   document.getElementById('d2').onclick = () => onDieClick(1);
   const d3 = document.getElementById('d3');
@@ -37,6 +49,7 @@ function init() {
   document.getElementById('theme-btn').onclick = toggleTheme;
   setupRules();
   setupModeToggle();
+  setupArtToggle();
   if (window.DBG) DBG.init();
   setupBoardInput(canvas);
   window.onBoardClick = onBoardClick;
@@ -111,6 +124,28 @@ function setupModeToggle() {
   };
 }
 
+/* ----------------------------- art skin ----------------------------- */
+
+function applyArt(on) {
+  window.__artMode = on;
+  document.body.classList.toggle('art-mode', on);
+  const btn = document.getElementById('art-btn');
+  if (btn) btn.textContent = on ? '🎨 Обычный' : '🎨 Арт';
+  if (typeof boardCanvas !== 'undefined' && boardCanvas) redrawBoard();
+}
+
+function setupArtToggle() {
+  let on = false;
+  try { on = localStorage.getItem('pe-art') === '1'; } catch (e) {}
+  applyArt(on);
+  const btn = document.getElementById('art-btn');
+  if (btn) btn.onclick = () => {
+    const next = !document.body.classList.contains('art-mode');
+    try { localStorage.setItem('pe-art', next ? '1' : '0'); } catch (e) {}
+    applyArt(next);
+  };
+}
+
 /* ----------------------------- theme ----------------------------- */
 
 function currentThemeName() {
@@ -146,14 +181,46 @@ function onRollClick() {
 
   if (isOnline()) {
     // Server is authoritative; send the intent only when we may actually roll.
-    if (MP.canRoll()) MP.roll();
+    if (MP.canRoll()) MP.roll(window.DBG && DBG.enabled ? DBG.takeForced() : null);
     return;
   }
 
   // Офлайн: нельзя бросать, пока не сходил предыдущими кубиками / игра не идёт.
   if (awaitingMove || gameOver) return;
-  animateDice(rnd(), rnd(), () => startMovePhase(diceVals[0], diceVals[1]));
+  const f = (window.DBG && DBG.enabled) ? DBG.takeForced() : [];
+  animateDice(f[0] || rnd(), f[1] || rnd(), () => startMovePhase(diceVals[0], diceVals[1]));
 }
+
+// Отладка (?debug=1): пара цифр с клавиатуры в фазе хода заменяет текущие
+// кубики на месте (пока оба не потрачены); до броска — задаёт следующий бросок.
+window.onForcedDice = function (vals) {
+  if (!vals || vals.length < 2) return;
+  if (isOnline()) {
+    if (MP.phase === 'move' && MP.mySeat === currentPlayer) { MP.debugDice(vals); DBG.takeForced(); }
+    return;
+  }
+  if (!awaitingMove || used[0] || used[1] || dice.length < 2 || bmChoice || expressChoice) return;
+  dice[0] = vals[0]; dice[1] = vals[1];
+  turnDouble = (dice[0] === dice[1]);
+  doubleOne = (dice[0] === 1 && dice[1] === 1);
+  turnSix = (dice[0] === 6 || dice[1] === 6);
+  DBG.takeForced();
+  DBG.log(`DBG set dice [${dice[0]},${dice[1]}]`);
+  const e1 = document.getElementById('d1'), e2 = document.getElementById('d2');
+  if (e1) e1.textContent = FACES[dice[0] - 1];
+  if (e2) e2.textContent = FACES[dice[1] - 1];
+  selectedDie = -1;
+  if (!hasAnyAction()) {
+    markDice();
+    setStatusMsg(`${PLAYERS[currentPlayer].name}: нет ходов`);
+    setTimeout(endTurn, 600);
+    return;
+  }
+  updateHighlights();
+  updateStatus();
+  markDice();
+  redrawBoard();
+};
 
 // Клик по кубику: в фазе хода (офлайн) — выбор кубика; иначе — бросок.
 function onDieClick(idx) {
@@ -183,7 +250,9 @@ function startMovePhase(a, b) {
 
   turnDouble = (a === b);
   doubleOne = (a === 1 && b === 1);
-  expressUsed = false;
+  turnSix = (a === 6 || b === 6);
+  expressJumps = 0;
+  turnCaptures = 0;
   if (window.DBG) DBG.log(`--- roll seat${currentPlayer} [${a},${b}]${turnDouble ? ' DOUBLE' : ''}${bonus ? ' +bonus6x' + bonus : ''}`);
 
   if (!hasAnyAction()) {
@@ -279,11 +348,44 @@ function computeTargets() {
         if (bm) add({ kind: 'moveBM', seat: currentPlayer, i, slot, bm, cell: [bm.r, bm.c] });
       }
     });
-    if (d === 1) {
+    if (d === 1 || d === 3) {
       ENGINE.pieces[currentPlayer].forEach((p, i) => {
-        const ti = ENGINE.onExpress(currentPlayer, i);
-        if (ti >= 0) add({ kind: 'express', seat: currentPlayer, i, slot, cell: TRACK[EXPRESS_NEXT[ti]] });
+        const target = ENGINE.expressTarget(currentPlayer, i, d);
+        if (target >= 0) add({ kind: 'express', seat: currentPlayer, i, slot, cell: TRACK[target] });
       });
+    }
+  }
+  // Ход на СУММУ двух базовых кубиков (если оба не использованы и ход легален).
+  if (dice.length >= 2 && !used[0] && !used[1]) {
+    const sum = dice[0] + dice[1];
+    ENGINE.pieces[currentPlayer].forEach((p, i) => {
+      if (!ENGINE.canMove(currentPlayer, i, sum, ctx)) return;
+      const dest = ENGINE.destCellOf(currentPlayer, i, sum);
+      if (dest) add({ kind: 'sum', seat: currentPlayer, i, cell: dest });
+      const bm = ENGINE.bmAfterMove(currentPlayer, i, sum);
+      if (bm) add({ kind: 'sumBM', seat: currentPlayer, i, bm, cell: [bm.r, bm.c] });
+    });
+  }
+
+  // Комбинированный выход: 6 (на «Х») + другой кубик сразу — показать конечную клетку
+  // ещё до выхода, чтобы было видно, куда фишка дойдёт.
+  const sixSlot = dice.findIndex((d, k) => !used[k] && d === 6);
+  if (sixSlot >= 0) {
+    const exitable = ENGINE.legalForDie(currentPlayer, 6, ctx)
+      .filter((j) => ENGINE.pieces[currentPlayer][j].where === 'prison');
+    if (exitable.length) {
+      const pi = exitable[0];
+      const own = ENGINE.ownProgressSet(currentPlayer, pi);
+      for (let k = 0; k < dice.length; k++) {
+        if (used[k] || k === sixSlot) continue;
+        const dd = dice[k];
+        if (dd > MAX_PROGRESS) continue;
+        let blocked = false;
+        for (const q of own) if (q > 0 && q <= dd) { blocked = true; break; }
+        if (blocked) continue;
+        const cell = ENGINE.cellAtProgress(currentPlayer, dd);
+        if (cell) add({ kind: 'exitMove', seat: currentPlayer, i: pi, sixSlot, dSlot: k, cell });
+      }
     }
   }
   return out;
@@ -301,9 +403,29 @@ function onTargetClick(idx) {
   }
   if (!awaitingMove) return;
   if (t.kind === 'exit') { doExit(t.i, t.slot); return; }
+  if (t.kind === 'exitMove') { doExitMove(t.seat, t.i, t.sixSlot, t.dSlot); return; }
   if (t.kind === 'express') { doExpress(t.seat, t.i, t.slot); return; }
   if (t.kind === 'moveBM') { doNormalMove(t.seat, t.i, t.slot, true); return; } // ход + съезд на БМ
+  if (t.kind === 'sum') { doSumMove(t.seat, t.i, false); return; }
+  if (t.kind === 'sumBM') { doSumMove(t.seat, t.i, true); return; }
   doNormalMove(t.seat, t.i, t.slot, false);
+}
+
+// Ход одной фишкой на сумму двух базовых кубиков (тратит оба).
+function doSumMove(seat, i, divert) {
+  if (isOnline()) { MP.act('sum', i, 0, divert); return; }
+  const sum = dice[0] + dice[1];
+  const res = ENGINE.applyDie(seat, i, sum);
+  turnCaptures += res.captured.length;
+  if (divert && ENGINE.canOfferBM(seat, i)) ENGINE.divertToBM(seat, i);
+  used[0] = true; used[1] = true;
+  selectedDie = -1;
+  playDiceLand();
+  if (window.DBG) {
+    DBG.log(`seat${seat} piece${i} SUM ${sum}${divert ? '+БМ' : ''}: cell ${JSON.stringify(ENGINE.cellOf(seat, i))}` +
+      `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}${res.finished ? ' HOME' : ''}`);
+  }
+  afterMove();
 }
 
 function doExit(i, slot) {
@@ -314,11 +436,26 @@ function doExit(i, slot) {
   afterMove();
 }
 
+// Комбинированный выход: выйти на «Х» (6) и сразу пройти вторым кубиком.
+function doExitMove(seat, i, sixSlot, dSlot) {
+  if (isOnline()) { MP.act('exit', i, sixSlot); MP.act('move', i, dSlot); return; }
+  ENGINE.applyDie(seat, i, 6);
+  const res = ENGINE.applyDie(seat, i, dice[dSlot]);
+  turnCaptures += res.captured.length;
+  used[sixSlot] = true; used[dSlot] = true;
+  selectedDie = -1; playDiceLand();
+  if (window.DBG) DBG.log(`seat${seat} piece${i} EXIT+${dice[dSlot]} -> ${JSON.stringify(ENGINE.cellOf(seat, i))}` +
+    `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}`);
+  afterMove();
+}
+
 function doExpress(seat, i, slot) {
   if (isOnline()) { MP.act('express', i, slot); return; }
-  ENGINE.expressJump(seat, i);
-  used[slot] = true; selectedDie = -1; expressUsed = true; playDiceLand();
-  if (window.DBG) DBG.log(`seat${seat} piece${i} EXPRESS (+доп. ход)`);
+  const res = ENGINE.expressJump(seat, i, dice[slot]);
+  turnCaptures += res.captured.length;
+  used[slot] = true; selectedDie = -1; expressJumps++; playDiceLand();
+  if (window.DBG) DBG.log(`seat${seat} piece${i} EXPRESS die${dice[slot]} -> ${JSON.stringify(ENGINE.cellOf(seat, i))} (+доп. ход)` +
+    `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}`);
   window.__movable = new Set();
   afterMove();
 }
@@ -385,8 +522,9 @@ function onBoardClick(seat, i) {
   }
   if (slot < 0) return; // этой фишкой сейчас ходить нельзя
 
-  // Экспресс: фишка на экспресс-клетке + кубик 1 → предложить прыжок или обычный ход.
-  if (dice[slot] === 1 && ENGINE.onExpress(currentPlayer, i) >= 0) {
+  // Экспресс: фишка на экспресс-клетке + кубик 1 (следующая) или 3 (противоположная)
+  // → предложить прыжок или обычный ход.
+  if ((dice[slot] === 1 || dice[slot] === 3) && ENGINE.onExpress(currentPlayer, i) >= 0) {
     offerExpress(currentPlayer, i, slot);
     return;
   }
@@ -397,6 +535,7 @@ function onBoardClick(seat, i) {
 function doNormalMove(seat, i, slot, divert) {
   if (isOnline()) { MP.act('move', i, slot, !!divert); return; }
   const res = ENGINE.applyDie(seat, i, dice[slot]);
+  turnCaptures += res.captured.length;
   if (divert && ENGINE.canOfferBM(seat, i)) ENGINE.divertToBM(seat, i);
   used[slot] = true;
   selectedDie = -1;
@@ -410,14 +549,18 @@ function doNormalMove(seat, i, slot, divert) {
   afterMove();
 }
 
-// Предложение экспресс-прыжка (по кубику 1 со стоянки на экспресс-клетке).
+// Предложение экспресс-прыжка (кубик 1 — следующая, 3 — противоположная).
 function offerExpress(seat, i, slot) {
   expressChoice = { seat, i, slot };
   const ti = ENGINE.onExpress(seat, i);
+  const target = ENGINE.expressTarget(seat, i, dice[slot]);
   const label = document.getElementById('express-label');
-  if (label) label.textContent = `🚀 Экспресс ${ti} → ${EXPRESS_NEXT[ti]}?`;
+  if (label) label.textContent = `🚀 Экспресс ${ti} → ${target}?`;
   const stepBtn = document.getElementById('express-step');
-  if (stepBtn) stepBtn.style.display = ENGINE.canMove(seat, i, 1, { doubleOne }) ? '' : 'none';
+  if (stepBtn) {
+    stepBtn.style.display = ENGINE.canMove(seat, i, dice[slot], { doubleOne }) ? '' : 'none';
+    stepBtn.textContent = `Обычный +${dice[slot]}`;
+  }
   const el = document.getElementById('express-prompt');
   if (el) el.classList.remove('hidden');
   window.__movable = new Set([`${seat},${i}`]);
@@ -542,10 +685,15 @@ function endTurn() {
   window.__targets = [];
   markDice();
 
-  if ((turnDouble || expressUsed) && !gameOver) {
-    const why = turnDouble ? 'дубль' : 'экспресс';
-    setStatusMsg(`${PLAYERS[currentPlayer].name}: ${why} — ещё ход!`);
-    if (window.DBG) DBG.log(`seat${currentPlayer} EXTRA turn (${why})`);
+  // Дубль / срубание / экспресс дают один доп. бросок (не суммируются).
+  const why = [];
+  if (turnDouble) why.push('дубль');
+  if (turnCaptures) why.push('срубил');
+  if (expressJumps) why.push('экспресс');
+  turnDouble = false; turnCaptures = 0; expressJumps = 0;
+  if (why.length && !gameOver) {
+    setStatusMsg(`${PLAYERS[currentPlayer].name}: ${why.join(' + ')} — ещё ход!`);
+    if (window.DBG) DBG.log(`seat${currentPlayer} EXTRA turn (${why.join('+')})`);
   } else {
     currentPlayer = (currentPlayer + 1) % 4;
     window.__turnSeat = currentPlayer;
@@ -573,8 +721,9 @@ function onResetClick() {
   window.__turnSeat = 0;
   bonusSix = [0, 0, 0, 0];
   dice = []; used = [false, false]; selectedDie = -1; awaitingMove = false;
-  turnDouble = false; doubleOne = false; gameOver = false;
-  bmChoice = null; expressChoice = null; expressUsed = false;
+  turnDouble = false; doubleOne = false; turnSix = false; gameOver = false;
+  turnCaptures = 0;
+  bmChoice = null; expressChoice = null; expressJumps = 0;
   window.__movable = new Set();
   window.__targets = [];
   document.getElementById('total').textContent = 'Сумма: —';

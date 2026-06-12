@@ -38,7 +38,8 @@
       try { localStorage.setItem('pe-name', name); } catch (e) {}
       if (this.room) this.room.send('name', String(name || '').slice(0, 16));
     },
-    roll() { if (this.room) this.room.send('roll'); },
+    roll(forced) { if (this.room) this.room.send('roll', (forced && forced.length) ? forced : undefined); },
+    debugDice(vals) { if (this.room) this.room.send('dbgdice', vals); },
     act(kind, i, slot, bm) { if (this.room) this.room.send('act', { kind, i, slot, bm: !!bm }); },
     bm(divert) { if (this.room) this.room.send('bm', { divert: !!divert }); },
     reset() { if (this.room) this.room.send('reset'); },
@@ -111,6 +112,9 @@
       setStatus('online');
     });
 
+    // rev меняется на каждый серверный sync() → гарантированная перерисовка,
+    // даже если поменялись только pieces/used (их onChange не всегда срабатывает).
+    $(room.state).listen('rev', refreshState);
     ['turn', 'phase', 'winner', 'doubleOne', 'bmSeat', 'bmI'].forEach((f) =>
       $(room.state).listen(f, refreshState));
 

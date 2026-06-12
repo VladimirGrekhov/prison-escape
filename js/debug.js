@@ -4,6 +4,11 @@ window.DBG = {
   enabled: /[?&]debug\b/.test(location.search),
   lines: [],
 
+  // Форс кубиков с клавиатуры: 1–6 задают значения следующего броска (до двух),
+  // 0/Esc — сброс. Забираются при броске (и офлайн, и онлайн).
+  forced: [],
+  takeForced() { const f = this.forced.slice(0, 2); this.forced = []; return f; },
+
   log() {
     const msg = Array.prototype.map.call(arguments, (a) =>
       (a && typeof a === 'object') ? JSON.stringify(a) : String(a)).join(' ');
@@ -44,6 +49,20 @@ window.DBG = {
       btn.style.display = this.enabled ? '' : 'none';
       btn.onclick = () => this.download();
     }
-    if (this.enabled) this.log('=== session start === ' + navigator.userAgent);
+    if (this.enabled) {
+      this.log('=== session start === ' + navigator.userAgent);
+      document.addEventListener('keydown', (e) => {
+        if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+        if (e.key >= '1' && e.key <= '6') {
+          if (this.forced.length >= 2) this.forced = [];
+          this.forced.push(+e.key);
+          this.log(`DBG forced dice: [${this.forced}]`);
+          // В фазе хода пара цифр заменяет текущие кубики на месте (game.js).
+          if (window.onForcedDice) window.onForcedDice(this.forced.slice());
+        } else if (e.key === '0' || e.key === 'Escape') {
+          if (this.forced.length) { this.forced = []; this.log('DBG forced dice cleared'); }
+        }
+      });
+    }
   },
 };

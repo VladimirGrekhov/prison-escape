@@ -98,6 +98,17 @@ function turnColor() {
   return (PLAYERS[s] && PLAYERS[s].color) || '#ffffff';
 }
 
+// Арт-доска: картинка как сама доска (обрезана под крест), фишки — в окошках.
+const ART_IMG = new Image();
+let artReady = false;
+ART_IMG.onload = () => { artReady = true; if (boardCanvas) drawBoard(boardCanvas); };
+ART_IMG.src = 'img/board-art.jpg';
+// Обрезка картинки под доску (bbox) — тюнится визуально, чтобы крест совпал.
+const ART_CROP = { sx: 16, sy: 208, sw: 1336, sh: 1340 };
+// Центры окошек-камер (доли холста) для фишек в тюрьме.
+const ART_WIN = [[0.275, 0.257], [0.731, 0.263], [0.262, 0.720], [0.725, 0.718]];
+const ART_PIECE_OFFS = [[-0.16, -0.16], [0.16, -0.16], [0, 0], [-0.16, 0.16], [0.16, 0.16]];
+
 const PLAYERS = [
   { color: '#e04040', name: 'Игрок 1' },
   { color: '#4040e0', name: 'Игрок 2' },
@@ -236,8 +247,13 @@ function drawPiece(ctx, x, y, color, rad, highlight) {
   ctx.arc(x, y, FR, 0, Math.PI * 2);
   ctx.fillStyle = color;
   ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.6)';
-  ctx.lineWidth = 1.5;
+  if (window.__artMode) {
+    ctx.strokeStyle = '#1a0d04';      // тёмная «нарисованная» обводка
+    ctx.lineWidth = 2.5;
+  } else {
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1.5;
+  }
   ctx.stroke();
 
   ctx.beginPath();
@@ -248,20 +264,19 @@ function drawPiece(ctx, x, y, color, rad, highlight) {
 
 function drawCorner(ctx, cx, cy, player, opts) {
   opts = opts || {};
-  const occupied = opts.occupied;      // seat has a player (undefined => offline: treat as present)
   const highlight = opts.highlight;    // it is this seat's turn
-  const empty = occupied === false;    // online & nobody on this seat
+  const empty = opts.occupied === false; // online & nobody on this seat
+  const art = opts.art;
 
   ctx.save();
   if (empty) ctx.globalAlpha = 0.32;   // dim unoccupied seats in online mode
 
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  const half = art ? CW * 0.5 : CW * 0.45;
   ctx.beginPath();
-  ctx.roundRect(cx - CW * 0.45, cy - CW * 0.45, CW * 0.9, CW * 0.9, 8);
-  ctx.fill();
+  ctx.roundRect(cx - half, cy - half, half * 2, half * 2, 8);
+  if (!art) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.fill(); }
 
   if (highlight) {
-    // Glowing border around the player whose turn it is.
     ctx.save();
     ctx.shadowColor = player.color;
     ctx.shadowBlur = 18;
@@ -269,34 +284,38 @@ function drawCorner(ctx, cx, cy, player, opts) {
     ctx.lineWidth = 4;
     ctx.stroke();
     ctx.restore();
-  } else {
+  } else if (!art) {
     ctx.strokeStyle = player.color;
     ctx.lineWidth = 2;
     ctx.stroke();
   }
 
+  const pr = art ? R * 0.72 : R * 1.2;
   if (opts.engineMode && window.ENGINE) {
-    // Фишки в этой тюрьме: свои + пленные (цветом владельца). Пустые места (онлайн)
-    // не показывают фишек.
+    // Фишки в этой тюрьме: свои + пленные (цветом владельца). Пустые места — без фишек.
     const held = empty ? [] : ENGINE.heldInPrison(opts.seat);
     held.forEach((h, slot) => {
-      const off = PIECE_OFFSETS[slot] || [0, 0];
+      const off = art
+        ? [(ART_PIECE_OFFS[slot] || [0, 0])[0] * CW, (ART_PIECE_OFFS[slot] || [0, 0])[1] * CW]
+        : (PIECE_OFFSETS[slot] || [0, 0]);
       const x = cx + off[0], y = cy + off[1];
       const hl = (opts.movable && opts.movable.has(`${h.seat},${h.i}`)) ? turnColor() : false;
-      drawPiece(ctx, x, y, PLAYERS[h.seat].color, R * 1.2, hl);
-      __pieceHits.push({ seat: h.seat, i: h.i, x, y, r: R * 1.4 });
+      drawPiece(ctx, x, y, PLAYERS[h.seat].color, pr, hl);
+      __pieceHits.push({ seat: h.seat, i: h.i, x, y, r: pr + 4 });
     });
-  } else {
+  } else if (!art) {
     PIECE_OFFSETS.forEach(([dx, dy]) => {
       drawPiece(ctx, cx + dx, cy + dy, player.color);
     });
   }
 
-  ctx.fillStyle = 'rgba(255,255,255,0.8)';
-  ctx.font = `bold ${R * 1.1}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(empty ? 'свободно' : player.name, cx, cy + CW * 0.38);
+  if (!art) {
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = `bold ${R * 1.1}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(empty ? 'свободно' : player.name, cx, cy + CW * 0.38);
+  }
 
   ctx.restore();
 }
@@ -311,86 +330,72 @@ function drawBoard(canvas) {
   __pieceHits = [];
   __targetHits = [];
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = activeTheme.bg;
-  ctx.fillRect(0, 0, TW, TH);
-
-  // Крест
-  for (let r = 0; r < GRID; r++) {
-    for (let c = 0; c < GRID; c++) {
-      const key = `${r},${c}`;
-      if (r === centerR && c === centerC) continue;
-      if (ARROW_CELLS.has(key)) continue;
-      if (DIAG_ARROW_CELLS.has(key)) continue;
-      if (inCross(r, c)) {
-        drawCircle(ctx, boardPx(c), boardPy(r), ROMAN_CELLS[key] || '', ENTRY_CELLS.has(key));
-      }
-    }
+  const art = window.__artMode && artReady;
+  if (art) {
+    // Картинка как сама доска (обрезана ровно по доске).
+    ctx.drawImage(ART_IMG, ART_CROP.sx, ART_CROP.sy, ART_CROP.sw, ART_CROP.sh, 0, 0, TW, TH);
+  } else if (!window.__artMode) {
+    ctx.fillStyle = activeTheme.bg;
+    ctx.fillRect(0, 0, TW, TH);
   }
 
-  // Крупные кружки (БМ и концы лучей) — больше обычных клеток.
-  const ENDR = R * 1.45;     // радиус крупных кружков
-  const ENDGAP = ENDR - R;   // сдвиг наружу, чтобы зазор до соседней клетки был как у обычных (4px)
+  // Наш нарисованный крест/клетки/стрелки — только в обычном режиме (в арте их даёт картинка).
+  if (!art) {
+    for (let r = 0; r < GRID; r++) {
+      for (let c = 0; c < GRID; c++) {
+        const key = `${r},${c}`;
+        if (r === centerR && c === centerC) continue;
+        if (ARROW_CELLS.has(key)) continue;
+        if (DIAG_ARROW_CELLS.has(key)) continue;
+        if (inCross(r, c)) {
+          drawCircle(ctx, boardPx(c), boardPy(r), ROMAN_CELLS[key] || '', ENTRY_CELLS.has(key));
+        }
+      }
+    }
+    const ENDR = R * 1.45;
+    const ENDGAP = ENDR - R;
+    BM_CELLS.forEach(({r, c, nx, ny}) => {
+      drawCircle(ctx, boardPx(c) + nx * ENDGAP, boardPy(r) + ny * ENDGAP, 'БМ', true, ENDR);
+    });
+    drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, 'Х', true, ENDR, PLAYERS[0].color);
+    drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, 'Х', true, ENDR, PLAYERS[3].color);
+    drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Х', true, ENDR, PLAYERS[2].color);
+    drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'Х', true, ENDR, PLAYERS[1].color);
+    drawArrow(ctx, boardPx(centerC),   boardPy(centerR-1), Math.PI);
+    drawArrow(ctx, boardPx(centerC+1), boardPy(centerR),  -Math.PI/2);
+    drawArrow(ctx, boardPx(centerC),   boardPy(centerR+1), 0);
+    drawArrow(ctx, boardPx(centerC-1), boardPy(centerR),   Math.PI/2);
+    DIAG_ARROWS.forEach(({ r, c, a }) => drawArrow(ctx, boardPx(c), boardPy(r), a));
+    drawBars(ctx, boardPx(centerC), boardPy(centerR), R + 2);
+    ctx.save();
+    ctx.strokeStyle = '#1e90ff';
+    ctx.lineWidth = 3;
+    EXPRESS.forEach((idx) => {
+      const [r, c] = TRACK[idx];
+      const p = cellCenter(r, c);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, R * 0.72, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
 
-  // БМ
-  BM_CELLS.forEach(({r, c, nx, ny}) => {
-    drawCircle(ctx, boardPx(c) + nx * ENDGAP, boardPy(r) + ny * ENDGAP, 'БМ', true, ENDR);
-  });
-
-  // Одиночки (концы лучей, напротив римской I) — входы в дом игрока:
-  // белые, крупные, с буквой «Х» цветом владеющего лучом игрока.
-  drawCircle(ctx, boardPx(9),  boardPy(2)  - ENDGAP, 'Х', true, ENDR, PLAYERS[0].color); // верх → игрок 1
-  drawCircle(ctx, boardPx(11), boardPy(18) + ENDGAP, 'Х', true, ENDR, PLAYERS[2].color); // низ  → игрок 3
-  drawCircle(ctx, boardPx(2)  - ENDGAP, boardPy(11), 'Х', true, ENDR, PLAYERS[3].color); // лево → игрок 4
-  drawCircle(ctx, boardPx(18) + ENDGAP, boardPy(9),  'Х', true, ENDR, PLAYERS[1].color); // право→ игрок 2
-
-  // Стрелки
-  drawArrow(ctx, boardPx(centerC),   boardPy(centerR-1), Math.PI);
-  drawArrow(ctx, boardPx(centerC+1), boardPy(centerR),  -Math.PI/2);
-  drawArrow(ctx, boardPx(centerC),   boardPy(centerR+1), 0);
-  drawArrow(ctx, boardPx(centerC-1), boardPy(centerR),   Math.PI/2);
-
-  // Диагональные стрелки в углах вокруг центра — смотрят внутрь.
-  DIAG_ARROWS.forEach(({ r, c, a }) => drawArrow(ctx, boardPx(c), boardPy(r), a));
-
-  // Решётка в центре
-  drawBars(ctx, boardPx(centerC), boardPy(centerR), R + 2);
-
-  // Угловые зоны
-  // Квадраты игроков ставим в диагональные секторы рядом с крестом.
-  // QCELL — позиция центра квадрата (в клетках от края). Больше = ближе к кресту.
+  // Угловые зоны / окошки-камеры с фишками в тюрьме.
   const QCELL = 3.4;
   const inX = boardPx(QCELL), inY = boardPy(QCELL);
-  const corners = [
-    { cx: inX,       cy: inY },
-    { cx: TW - inX,  cy: inY },
-    { cx: inX,       cy: TH - inY },
-    { cx: TW - inX,  cy: TH - inY },
-  ];
-  // Движок-отрисовка работает и офлайн, и онлайн (net.js зеркалит состояние в ENGINE).
+  const corners = art
+    ? ART_WIN.map(([fx, fy]) => ({ cx: fx * TW, cy: fy * TH }))
+    : [{ cx: inX, cy: inY }, { cx: TW - inX, cy: inY }, { cx: inX, cy: TH - inY }, { cx: TW - inX, cy: TH - inY }];
   const engineMode = !!window.ENGINE;
   const movable = window.__movable instanceof Set ? window.__movable : null;
   corners.forEach((pos, i) => drawCorner(ctx, pos.cx, pos.cy, PLAYERS[i], {
     highlight: window.__turnSeat === i,
-    // In online mode __occupied is a Set of taken seats; offline it's undefined
-    // and every seat is treated as present (classic hot-seat board).
     occupied: window.__occupied ? window.__occupied.has(i) : undefined,
     engineMode,
     seat: i,
     movable,
+    art,
   }));
-
-  // Экспресс-клетки — тонкое синее кольцо-маркер.
-  ctx.save();
-  ctx.strokeStyle = '#1e90ff';
-  ctx.lineWidth = 3;
-  EXPRESS.forEach((idx) => {
-    const [r, c] = TRACK[idx];
-    const p = cellCenter(r, c);
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, R * 0.72, 0, Math.PI * 2);
-    ctx.stroke();
-  });
-  ctx.restore();
 
   // Клетки-цели (куда можно походить) — подсветка инверсией + кликабельны.
   if (engineMode) drawTargets(ctx);
@@ -404,11 +409,12 @@ function drawBoard(canvas) {
 // Центр клетки-цели в canvas-координатах (учёт смещения «Х» и кармана БМ).
 function targetCenter(t) {
   if (t.kind === 'exit') return xCenter(t.seat);
-  if (t.kind === 'bmDivert' || t.kind === 'moveBM') return bmCenter(t.bm);
+  if (t.kind === 'bmDivert' || t.kind === 'moveBM' || t.kind === 'sumBM') return bmCenter(t.bm);
   return cellCenter(t.cell[0], t.cell[1]);
 }
 function targetRadius(t) {
-  return (t.kind === 'bmDivert' || t.kind === 'moveBM' || t.kind === 'exit') ? R * 1.15 : R * 0.92;
+  const big = (t.kind === 'bmDivert' || t.kind === 'moveBM' || t.kind === 'sumBM' || t.kind === 'exit');
+  return big ? R * 1.15 : R * 0.92;
 }
 
 // Подсветка клеток-целей цветом игрока, чей ход (заливка + кольцо).

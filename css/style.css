@@ -257,7 +257,24 @@ body {
   transition: background 0.3s, color 0.3s;
 }
 
-#mode-btn, #log-btn {
+/* Арт-режим: картинка-подложка под доской + «тюремный» стиль кубиков. */
+body.art-mode { background: #241710; }
+
+body.art-mode #game-wrap {
+  background: #1a1009;   /* тёмная рамка; саму доску-картинку рисует canvas */
+  border-color: #2a1c10;
+}
+
+body.art-mode .die {
+  background: linear-gradient(145deg, #6b5a45, #36281a);
+  color: #f1e3c2;
+  border-color: #160d05;
+  font-family: Georgia, 'Times New Roman', serif;
+  text-shadow: 0 1px 2px #000;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.55), 0 2px 4px rgba(0, 0, 0, 0.45);
+}
+
+#mode-btn, #log-btn, #art-btn {
   padding: 6px 14px;
   font-size: 13px;
   font-weight: 600;
@@ -269,8 +286,8 @@ body {
   transition: background 0.15s, transform 0.1s;
 }
 
-#mode-btn:hover,  #log-btn:hover  { background: var(--btn-hover); }
-#mode-btn:active, #log-btn:active { transform: scale(0.96); }
+#mode-btn:hover,  #log-btn:hover,  #art-btn:hover  { background: var(--btn-hover); }
+#mode-btn:active, #log-btn:active, #art-btn:active { transform: scale(0.96); }
 
 #mp-controls {
   display: none; /* shown by net.js only when online */

@@ -12,7 +12,9 @@
     root.ENGINE = api.createEngine(); // единственный экземпляр для клиента
   }
 })(typeof self !== 'undefined' ? self : this, function (TOP) {
-  const { TRACK, ENTRY, HOME_LANE, TRACK_MAIN, MAX_PROGRESS, SAFE, BM_BY_TRACK, EXPRESS_NEXT } = TOP;
+  const { TRACK, ENTRY, HOME_LANE, TRACK_MAIN, MAX_PROGRESS, SAFE, BM_BY_TRACK, EXPRESS_NEXT, EXPRESS_ACROSS } = TOP;
+  // Карта экспресс-прыжка для кубика: 1 — следующая по кругу, 3 — противоположная.
+  const expressMapFor = (die) => (die === 1 ? EXPRESS_NEXT : die === 3 ? EXPRESS_ACROSS : null);
   const SEATS = 4;
   const PER_SEAT = 5;
 
@@ -102,7 +104,7 @@
             if (die === 6 && !this.ownProgressSet(seat, i).has(0)) out.push(i);
             continue;
           }
-          const expressOk = die === 1 && this.onExpress(seat, i) >= 0;
+          const expressOk = !!expressMapFor(die) && this.onExpress(seat, i) >= 0;
           if (this.canMove(seat, i, die, ctx) || expressOk) out.push(i);
         }
         return out;
@@ -193,13 +195,20 @@
         const ti = (ENTRY[seat] + p.progress) % TRACK.length;
         return (EXPRESS_NEXT[ti] !== undefined) ? ti : -1;
       },
-      expressJump(seat, i) {
+      expressJump(seat, i, die) {
         const p = this.pieces[seat][i];
         const ti = (ENTRY[seat] + p.progress) % TRACK.length;
-        const target = EXPRESS_NEXT[ti];
+        const map = expressMapFor(die) || EXPRESS_NEXT;
+        const target = map[ti];
         p.progress = (target - ENTRY[seat] + TRACK.length) % TRACK.length;
         p.bm = false;
         return { captured: this.captureAt(seat, i) };
+      },
+      // Куда прыгнет экспресс с этим кубиком (track-индекс цели) или -1.
+      expressTarget(seat, i, die) {
+        const map = expressMapFor(die);
+        const ti = this.onExpress(seat, i);
+        return (map && ti >= 0) ? map[ti] : -1;
       },
 
       destCellOf(seat, i, die) {
@@ -209,6 +218,9 @@
         if (np > MAX_PROGRESS) return null;
         return cellForProgress(seat, np);
       },
+
+      // Клетка по «прогрессу» для места (для комбинированной цели выход+ход).
+      cellAtProgress(seat, progress) { return cellForProgress(seat, progress); },
 
       // Если ход на `die` заканчивается напротив БМ — вернуть этот БМ (иначе null).
       bmAfterMove(seat, i, die) {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=40">
+  <link rel="stylesheet" href="css/style.css?v=55">
 </head>
 <body>
 
@@ -40,6 +40,7 @@
     <div id="mp-bar">
       <span id="mp-status">🔌 Локальная игра</span>
       <button id="mode-btn">🔌 Играть локально</button>
+      <button id="art-btn">🎨 Арт</button>
       <button id="log-btn" style="display:none">⬇ Лог</button>
       <div id="mp-controls">
         <input id="name-input" type="text" maxlength="16" placeholder="Ваше имя" />
@@ -70,13 +71,15 @@
         <h3>Ход</h3>
         <ul>
           <li>Игрок бросает кубики и двигает фишку на выпавшее число.</li>
-          <li>Если выпал любой <b>дубль</b> — игрок ходит и получает дополнительный ход.</li>
+          <li>Можно сходить одной фишкой на сумму двух кубиков (если ход возможен).</li>
+          <li>Если выпал любой <b>дубль</b> — игрок получает дополнительный ход.</li>
+          <li>За <b>срубленную</b> фишку — дополнительный ход. Доп. ходы не суммируются: дубль, срубание и экспресс в одном броске дают один дополнительный ход.</li>
           <li>Нельзя перепрыгивать через свою фишку — она блокирует ход.</li>
           <li>Нельзя ставить две свои фишки на одну клетку.</li>
         </ul>
 
         <h3>🚀 Экспресс</h3>
-        <p>Клетки 6, 20, 34, 48 (отмечены синим кольцом) — экспресс. Если твоя фишка стоит на одной из них и выпала <b>1</b>, можно перепрыгнуть на следующую (6→20→34→48→6 по кругу) и получить <b>дополнительный ход</b>.</p>
+        <p>Клетки 6, 20, 34, 48 (отмечены синим кольцом) — экспресс. Если твоя фишка стоит на одной из них и выпала <b>1</b>, можно перепрыгнуть на следующую (6→20→34→48→6 по кругу), а если выпала <b>3</b> — на противоположную (6↔34, 20↔48, в обе стороны). Прыжок даёт <b>дополнительный ход</b>.</p>
 
         <h3>Безопасное место (БМ)</h3>
         <ul>
@@ -101,14 +104,14 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=40"></script>
-  <script src="js/topology.js?v=40"></script>
-  <script src="js/board.js?v=40"></script>
-  <script src="js/engine.js?v=40"></script>
-  <script src="js/debug.js?v=40"></script>
-  <script src="js/sound.js?v=40"></script>
-  <script src="js/game.js?v=40"></script>
-  <script src="js/net.js?v=40"></script>
+  <script src="js/colyseus.js?v=55"></script>
+  <script src="js/topology.js?v=55"></script>
+  <script src="js/board.js?v=55"></script>
+  <script src="js/engine.js?v=55"></script>
+  <script src="js/debug.js?v=55"></script>
+  <script src="js/sound.js?v=55"></script>
+  <script src="js/game.js?v=55"></script>
+  <script src="js/net.js?v=55"></script>
 
 </body>
 </html>

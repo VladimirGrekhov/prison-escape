@@ -67,6 +67,7 @@ class GameState extends Schema {
     this.bmSeat = -1;               // pending БМ divert decision
     this.bmI = -1;
     this.seq = 0;                   // bumps on each roll -> dice animation
+    this.rev = 0;                   // bumps on EVERY sync -> guaranteed client refresh
   }
 }
 defineTypes(GameState, {
@@ -82,6 +83,7 @@ defineTypes(GameState, {
   bmSeat: "int8",
   bmI: "int8",
   seq: "uint32",
+  rev: "uint32",
 });
 
 // ---- Room ----------------------------------------------------------------
@@ -101,12 +103,15 @@ class GameRoom extends Room {
     this.bonus = [0, 0, 0, 0];
     this.doubleOne = false;
     this.turnDouble = false;
-    this.expressUsed = false;
+    this.turnSix = false;
+    this.expressJumps = 0;
+    this.turnCaptures = 0;          // срубил в этом броске → доп. ход (не суммируется)
     this.bm = null;
     this.winner = -1;
     this.sync();
 
-    this.onMessage("roll", (c) => this.onRoll(c));
+    this.onMessage("roll", (c, m) => this.onRoll(c, m));
+    this.onMessage("dbgdice", (c, m) => this.onDbgDice(c, m));
     this.onMessage("act", (c, m) => this.onAct(c, m));
     this.onMessage("bm", (c, m) => this.onBm(c, m));
     this.onMessage("name", (c, name) => {
@@ -165,13 +170,16 @@ class GameRoom extends Room {
     return this.hasUnusedSix() && this.engine.hasRedeemable(this.turn);
   }
 
-  onRoll(client) {
+  onRoll(client, m) {
     if (this.seatOf(client) !== this.turn) return;
     if (this.phase !== "idle" || this.winner >= 0) return;
     if (!this.occupiedSeats().has(this.turn)) return;
 
-    const a = 1 + Math.floor(Math.random() * 6);
-    const b = 1 + Math.floor(Math.random() * 6);
+    let a = 1 + Math.floor(Math.random() * 6);
+    let b = 1 + Math.floor(Math.random() * 6);
+    // Отладка: клиент с ?debug=1 может прислать заданные значения кубиков.
+    const forced = Array.isArray(m) ? m.map((d) => d | 0).filter((d) => d >= 1 && d <= 6).slice(0, 2) : [];
+    if (forced.length) { a = forced[0]; if (forced.length > 1) b = forced[1]; }
     this.dice = [a, b];
     this.used = [false, false];
     const bonus = this.bonus[this.turn] || 0;
@@ -179,10 +187,12 @@ class GameRoom extends Room {
     this.bonus[this.turn] = 0;
     this.turnDouble = (a === b);
     this.doubleOne = (a === 1 && b === 1);
-    this.expressUsed = false;
+    this.turnSix = (a === 6 || b === 6); // выпала 6 → доп. ход
+    this.expressJumps = 0;
+    this.turnCaptures = 0;
     this.phase = "rolling";
     this.state.seq++;
-    serverLog(`--- roll seat${this.turn} [${a},${b}]${this.turnDouble ? ' DOUBLE' : ''}${bonus ? ' +bonus6x' + bonus : ''}`);
+    serverLog(`--- roll seat${this.turn} [${a},${b}]${this.turnDouble ? ' DOUBLE' : ''}${bonus ? ' +bonus6x' + bonus : ''}${forced.length ? ' FORCED' : ''}`);
     this.sync();
 
     if (this._rollTimer) clearTimeout(this._rollTimer);
@@ -191,6 +201,20 @@ class GameRoom extends Room {
       else { this.phase = "move"; }
       this.sync();
     }, ROLL_MS);
+  }
+
+  // Отладка: замена ещё не потраченных базовых кубиков в фазе хода (?debug=1).
+  onDbgDice(client, m) {
+    if (this.seatOf(client) !== this.turn || this.phase !== "move") return;
+    const f = Array.isArray(m) ? m.map((d) => d | 0).filter((d) => d >= 1 && d <= 6).slice(0, 2) : [];
+    if (f.length < 2 || this.used[0] || this.used[1] || this.dice.length < 2) return;
+    this.dice[0] = f[0]; this.dice[1] = f[1];
+    this.turnDouble = (f[0] === f[1]);
+    this.doubleOne = (f[0] === 1 && f[1] === 1);
+    this.turnSix = (f[0] === 6 || f[1] === 6);
+    serverLog(`--- DBG set dice seat${this.turn} [${f[0]},${f[1]}]`);
+    if (!this.hasAnyAction()) this.endTurn();
+    this.sync();
   }
 
   onAct(client, m) {
@@ -214,16 +238,31 @@ class GameRoom extends Room {
       this.used[slot] = true;
       serverLog(`seat${seat} piece${i} EXIT -> x${seat}`);
       this.afterMove();
-    } else if (kind === "express") {
-      if (die !== 1 || E.onExpress(seat, i) < 0) return;
-      E.expressJump(seat, i);
+    } else if (kind === "express") { // 1 — следующая по кругу, 3 — противоположная
+      if ((die !== 1 && die !== 3) || E.onExpress(seat, i) < 0) return;
+      const res = E.expressJump(seat, i, die);
+      this.turnCaptures += res.captured.length;
       this.used[slot] = true;
-      this.expressUsed = true;
-      serverLog(`seat${seat} piece${i} EXPRESS`);
+      this.expressJumps++;
+      serverLog(`seat${seat} piece${i} EXPRESS die${die} -> ${JSON.stringify(E.cellOf(seat, i))}` +
+        `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}`);
+      this.afterMove();
+    } else if (kind === "sum") { // ход одной фишкой на сумму двух базовых кубиков
+      if (this.used[0] || this.used[1] || this.dice.length < 2) return;
+      const sum = this.dice[0] + this.dice[1];
+      if (!E.canMove(seat, i, sum, this.ctx())) return;
+      const res = E.applyDie(seat, i, sum);
+      this.turnCaptures += res.captured.length;
+      const divert = !!(m.bm) && E.canOfferBM(seat, i);
+      if (divert) E.divertToBM(seat, i);
+      this.used[0] = true; this.used[1] = true;
+      serverLog(`seat${seat} piece${i} SUM ${sum}${divert ? '+БМ' : ''} -> ${JSON.stringify(E.cellOf(seat, i))}` +
+        `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}${res.finished ? ' HOME' : ''}`);
       this.afterMove();
     } else { // move (m.bm = сразу съехать на БМ, если ход закончился напротив него)
       if (!E.canMove(seat, i, die, this.ctx())) return;
       const res = E.applyDie(seat, i, die);
+      this.turnCaptures += res.captured.length;
       const divert = !!(m.bm) && E.canOfferBM(seat, i);
       if (divert) E.divertToBM(seat, i);
       this.used[slot] = true;
@@ -258,7 +297,16 @@ class GameRoom extends Room {
     this.used = [];
     this.bm = null;
     this.phase = "idle";
-    if (this.turnDouble || this.expressUsed) { serverLog(`seat${this.turn} EXTRA turn`); return; }
+    // Дубль / срубание / экспресс дают один доп. бросок (не суммируются).
+    const why = [];
+    if (this.turnDouble) why.push("дубль");
+    if (this.turnCaptures) why.push("срубил");
+    if (this.expressJumps) why.push("экспресс");
+    this.turnDouble = false; this.turnCaptures = 0; this.expressJumps = 0;
+    if (why.length) {
+      serverLog(`seat${this.turn} EXTRA turn (${why.join('+')})`);
+      return;
+    }
     this.advanceTurn();
     serverLog(`turn -> seat${this.turn}`);
   }
@@ -293,13 +341,15 @@ class GameRoom extends Room {
     this.state.winner = this.winner;
     this.state.bmSeat = this.bm ? this.bm.seat : -1;
     this.state.bmI = this.bm ? this.bm.i : -1;
+    this.state.rev = (this.state.rev + 1) >>> 0; // гарантированный триггер refresh у клиента
   }
 
   resetGame() {
     if (this._rollTimer) clearTimeout(this._rollTimer);
     this.engine.newGame();
     this.dice = []; this.used = []; this.bonus = [0, 0, 0, 0];
-    this.doubleOne = false; this.turnDouble = false; this.expressUsed = false;
+    this.doubleOne = false; this.turnDouble = false; this.turnSix = false; this.expressJumps = 0;
+    this.turnCaptures = 0;
     this.bm = null; this.winner = -1; this.phase = "idle";
     const occ = [...this.occupiedSeats()].sort((x, y) => x - y);
     this.turn = occ.length ? occ[0] : 0;
