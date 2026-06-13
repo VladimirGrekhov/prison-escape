@@ -102,13 +102,15 @@ class GameRoom extends Room {
       ? Math.min(Math.max(2, options.maxPlayers | 0), MAX_SEATS)
       : MAX_SEATS;
     this.fillBots = !!(options && options.fillBots);
+    this.preCreated = !!(options && options.preCreated);
+    this.autoDispose = !this.preCreated; // пресет-комнаты не умирают от пустоты
     this.minPlayers = 2;
     this.hostSessionId = "";
     this._rollTimer = null;
     this._startTimer = null;
     this._emptyTimer = null;
 
-    const roomName = options && options.roomName
+    this._roomName = options && options.roomName
       ? String(options.roomName).slice(0, 24)
       : `Комната ${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
 
@@ -120,7 +122,7 @@ class GameRoom extends Room {
     this.engine = createEngine();
     this._resetVars();
 
-    this.setMetadata({ name: roomName, roomPhase: "waiting", players: 0, maxPlayers: this.maxClients });
+    this._syncMeta();
 
     // ── message handlers ───────────────────────────────────────────────────
 
@@ -142,15 +144,31 @@ class GameRoom extends Room {
       if (this.roomPhase === "playing" || this.roomPhase === "finished") this.resetGame();
     });
 
-    // waiting → dispose если за 90 с не набралось игроков
-    this._emptyTimer = this.clock.setTimeout(() => {
-      if (this.roomPhase === "waiting" && this.humansCount() < this.minPlayers) {
-        serverLog(`room ${this.roomId} empty timeout → disconnect`);
-        this.disconnect();
-      }
-    }, 90_000);
+    // waiting → dispose если за 90 с не набралось игроков (пресет-комнаты не умирают)
+    if (!this.preCreated) {
+      this._emptyTimer = this.clock.setTimeout(() => {
+        if (this.roomPhase === "waiting" && this.humansCount() < this.minPlayers) {
+          serverLog(`room ${this.roomId} empty timeout → disconnect`);
+          this.disconnect();
+        }
+      }, 90_000);
+    }
 
     this.sync();
+  }
+
+  // ── metadata ──────────────────────────────────────────────────────────────
+
+  _syncMeta() {
+    const names = [];
+    for (const [, p] of this.state.players) if (!p.isBot) names.push(p.name);
+    this.setMetadata({
+      name: this._roomName,
+      roomPhase: this.state.roomPhase,
+      players: this.humansCount(),
+      maxPlayers: this.maxClients,
+      playerNames: names,
+    });
   }
 
   // ── lifecycle ─────────────────────────────────────────────────────────────
@@ -163,7 +181,7 @@ class GameRoom extends Room {
     this.state.countdown = 0;
     this.removeBots();
     this.unlock();
-    this.setMetadata({ roomPhase: "waiting", players: this.humansCount() });
+    this._syncMeta();
     serverLog(`room ${this.roomId} → waiting`);
     this.sync();
   }
@@ -174,7 +192,7 @@ class GameRoom extends Room {
     this.state.roomPhase = "starting";
     if (this.fillBots) this.fillSeatsWithBots();
     this.lock();
-    this.setMetadata({ roomPhase: "starting" });
+    this._syncMeta();
 
     let n = 3;
     this.state.countdown = n;
@@ -194,7 +212,7 @@ class GameRoom extends Room {
   toPlaying() {
     this.state.roomPhase = "playing";
     this.state.countdown = 0;
-    this.setMetadata({ roomPhase: "playing" });
+    this._syncMeta();
     this.resetGame();
     serverLog(`room ${this.roomId} → playing`);
     this.sync();
@@ -205,8 +223,12 @@ class GameRoom extends Room {
     this.state.roomPhase = "finished";
     this.winner = winnerSeat;
     this.phase = "over";
-    this.setMetadata({ roomPhase: "finished" });
-    this.clock.setTimeout(() => this.disconnect(), 15_000);
+    this._syncMeta();
+    // пресет-комната после показа результатов возвращается в waiting
+    this.clock.setTimeout(() => {
+      if (this.preCreated) { this.removeBots(); this.state.players.clear(); this.unlock(); this.toWaiting(); }
+      else this.disconnect();
+    }, 15_000);
     serverLog(`room ${this.roomId} → finished (winner seat${winnerSeat})`);
     this.sync();
   }
@@ -229,7 +251,7 @@ class GameRoom extends Room {
     }
 
     const humanCount = this.humansCount();
-    this.setMetadata({ players: humanCount });
+    this._syncMeta();
 
     client.send("welcome", {
       sessionId: client.sessionId,
@@ -256,7 +278,7 @@ class GameRoom extends Room {
       if (client.sessionId === this.hostSessionId) this.rotateHost();
       if (this.roomPhase === "starting" && this.humansCount() < this.minPlayers) this.toWaiting();
       else {
-        this.setMetadata({ players: this.humansCount() });
+        this._syncMeta();
         this.sync();
       }
       return;
@@ -650,13 +672,45 @@ class GameRoom extends Room {
 
 // ---- Boot ----------------------------------------------------------------
 
+const { matchMaker } = require("colyseus");
+
+const PRESET_NAMES = ["Комната 1", "Комната 2"];
+// roomId → имя; обновляется при создании/гибели
+const presetRooms = new Map();
+
+async function ensurePresetRooms() {
+  try {
+    const rooms = await matchMaker.query({ name: "prison" });
+    const existingIds = new Set(rooms.map((r) => r.roomId));
+    // убираем умершие пресеты
+    for (const id of presetRooms.keys()) if (!existingIds.has(id)) presetRooms.delete(id);
+    // создаём только если нужен конкретный слот
+    for (let i = 0; i < PRESET_NAMES.length; i++) {
+      const name = PRESET_NAMES[i];
+      const already = [...presetRooms.values()].includes(name);
+      if (already) continue;
+      const r = await matchMaker.createRoom("prison", {
+        roomName: name, maxPlayers: 4, fillBots: false, preCreated: true,
+      });
+      presetRooms.set(r.roomId, name);
+      serverLog(`preset room created: "${name}" ${r.roomId}`);
+    }
+  } catch (e) {
+    console.warn("ensurePresetRooms:", e && e.message);
+  }
+}
+
 const port = Number(process.env.PORT) || 2567;
 const host = process.env.HOST || "127.0.0.1";
 const gameServer = new Server();
 gameServer.define("lobby", LobbyRoom);
 gameServer.define("prison", GameRoom);
-gameServer.listen(port, host);
-console.log(`Prison Escape multiplayer listening on ws://${host}:${port}`);
+gameServer.listen(port, host).then(async () => {
+  console.log(`Prison Escape multiplayer listening on ws://${host}:${port}`);
+  await ensurePresetRooms();
+  // проверяем каждые 30 с — если пресет-комната умерла, пересоздаём
+  setInterval(ensurePresetRooms, 30_000);
+});
 
 // ---- Debug log sink ------------------------------------------------------
 const http = require("http");

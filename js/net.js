@@ -98,18 +98,34 @@
     const list = document.getElementById('lobby-rooms-list');
     const hint = document.getElementById('lobby-empty-hint');
     if (!list) return;
-    // фильтруем — только waiting-комнаты (не заблокированные)
     const waiting = Object.values(_rooms).filter((r) => r.metadata && r.metadata.roomPhase === 'waiting');
     if (hint) hint.style.display = waiting.length ? 'none' : '';
     list.innerHTML = '';
     waiting.forEach((r) => {
       const meta = r.metadata || {};
+      const max = meta.maxPlayers || 4;
+      const names = Array.isArray(meta.playerNames) ? meta.playerNames : [];
+
+      // слоты: заполненные имена + пустые
+      let slots = '';
+      for (let s = 0; s < max; s++) {
+        const name = names[s];
+        slots += name
+          ? `<div class="lobby-slot filled">${esc(name)}</div>`
+          : `<div class="lobby-slot empty">свободно</div>`;
+      }
+
       const card = document.createElement('div');
       card.className = 'lobby-room-card';
       card.innerHTML =
-        `<span class="lobby-room-name">${esc(meta.name || r.roomId)}</span>` +
-        `<span class="lobby-room-count">${meta.players || 0}/${meta.maxPlayers || 4}</span>` +
-        `<button data-rid="${esc(r.roomId)}">Войти</button>`;
+        `<div class="lobby-room-info">` +
+          `<div class="lobby-room-header">` +
+            `<span class="lobby-room-name">${esc(meta.name || r.roomId)}</span>` +
+            `<span class="lobby-room-count">${meta.players || 0}/${max}</span>` +
+          `</div>` +
+          `<div class="lobby-room-slots">${slots}</div>` +
+        `</div>` +
+        `<div class="lobby-room-join"><button>Войти →</button></div>`;
       card.querySelector('button').onclick = () => joinRoom(r.roomId);
       list.appendChild(card);
     });
