@@ -64,6 +64,7 @@
   // ── lobby ─────────────────────────────────────────────────────────────────
 
   let _rooms = {};   // roomId → metadata
+  let _filter = 0;  // 0=все, 2/3/4=по числу игроков
 
   async function showLobby() {
     if (!MP._client) return;
@@ -94,39 +95,64 @@
     }
   }
 
+  const SEAT_COLORS = ['#c0392b', '#2980b9', '#27ae60', '#8e44ad'];
+
   function renderRooms() {
     const list = document.getElementById('lobby-rooms-list');
     const hint = document.getElementById('lobby-empty-hint');
     if (!list) return;
-    const waiting = Object.values(_rooms).filter((r) => r.metadata && r.metadata.roomPhase === 'waiting');
-    if (hint) hint.style.display = waiting.length ? 'none' : '';
+
+    const visible = Object.values(_rooms).filter((r) => {
+      const meta = r.metadata || {};
+      if (meta.private) return false;
+      if (meta.roomPhase !== 'waiting') return false;
+      if (_filter > 0 && meta.maxPlayers !== _filter) return false;
+      return true;
+    });
+
+    if (hint) hint.style.display = visible.length ? 'none' : '';
     list.innerHTML = '';
-    waiting.forEach((r) => {
+
+    visible.forEach((r) => {
       const meta = r.metadata || {};
       const max = meta.maxPlayers || 4;
       const names = Array.isArray(meta.playerNames) ? meta.playerNames : [];
+      const filled = names.filter(Boolean).length;
+      const hasEmpty = filled < max;
 
-      // слоты: заполненные имена + пустые
-      let slots = '';
+      let seatsHtml = '';
       for (let s = 0; s < max; s++) {
-        const name = names[s];
-        slots += name
-          ? `<div class="lobby-slot filled">${esc(name)}</div>`
-          : `<div class="lobby-slot empty">свободно</div>`;
+        const name = names[s] || null;
+        if (name) {
+          seatsHtml +=
+            `<div class="rtc-seat filled">` +
+            `<div class="rtc-avatar" style="background:${SEAT_COLORS[s % 4]}">${esc(name[0].toUpperCase())}</div>` +
+            `<div class="rtc-label">${esc(name)}</div>` +
+            `</div>`;
+        } else {
+          seatsHtml +=
+            `<div class="rtc-seat empty" data-rid="${esc(r.roomId)}">` +
+            `<div class="rtc-avatar">+</div>` +
+            `<div class="rtc-label">войти</div>` +
+            `</div>`;
+        }
       }
 
       const card = document.createElement('div');
-      card.className = 'lobby-room-card';
+      card.className = 'room-table-card' + (hasEmpty ? '' : ' room-full');
       card.innerHTML =
-        `<div class="lobby-room-info">` +
-          `<div class="lobby-room-header">` +
-            `<span class="lobby-room-name">${esc(meta.name || r.roomId)}</span>` +
-            `<span class="lobby-room-count">${meta.players || 0}/${max}</span>` +
-          `</div>` +
-          `<div class="lobby-room-slots">${slots}</div>` +
+        `<div class="rtc-header">` +
+          `<span class="rtc-name">${esc(meta.name || r.roomId)}</span>` +
+          `<span class="rtc-count">${filled}/${max}</span>` +
         `</div>` +
-        `<div class="lobby-room-join"><button>Войти →</button></div>`;
-      card.querySelector('button').onclick = () => joinRoom(r.roomId);
+        `<div class="rtc-seats">${seatsHtml}</div>`;
+
+      if (hasEmpty) {
+        card.querySelectorAll('.rtc-seat.empty').forEach((seat) => {
+          seat.addEventListener('click', (e) => { e.stopPropagation(); joinRoom(r.roomId); });
+        });
+        card.addEventListener('click', () => joinRoom(r.roomId));
+      }
       list.appendChild(card);
     });
   }
@@ -138,12 +164,13 @@
 
   async function createRoom() {
     const maxPlayers = parseInt(document.getElementById('lobby-maxplayers')?.value || '4', 10);
-    const fillBots = !!(document.getElementById('lobby-fillbots')?.checked);
+    const isPrivate = !!(document.getElementById('lobby-private')?.checked);
     try {
       const room = await MP._client.create('prison', {
         name: MP.myName(),
         maxPlayers,
-        fillBots,
+        fillBots: false,
+        private: isPrivate,
       });
       closeLobbyOverlay();
       adopt(room);
@@ -214,6 +241,8 @@
     room.onMessage('welcome', (msg) => {
       MP.mySeat = msg.seat;
       MP.isHost = !!msg.isHost;
+      MP._roomCode = msg.code || null;
+      MP._isPrivate = !!msg.isPrivate;
       window.__mySeat = msg.seat;
       window.__viewRot = ({ 0: 2, 1: 1, 2: 3 })[msg.seat] || 0;
       refreshRoster();
@@ -238,6 +267,8 @@
       }
       updateWaitingUI(room.state);
     });
+
+    $(room.state).listen('maxPlayers', () => updateWaitingUI(room.state));
 
     $(room.state).listen('countdown', () => {
       const el = document.getElementById('countdown-num');
@@ -284,18 +315,22 @@
       show('finished-overlay');
       updateFinishedUI(state);
     }
+    // leave-кнопка видна только во время игры
+    const gameLeaveBtn = document.getElementById('game-leave-btn');
+    if (gameLeaveBtn) gameLeaveBtn.classList.toggle('hidden', phase !== 'playing');
+
     // 'playing' — оверлеи убраны, доска видна
     if (typeof refreshControls === 'function') refreshControls();
   }
 
   function updateWaitingUI(state) {
+    const maxPlayers = state.maxPlayers || 4;
     const playersEl = document.getElementById('waiting-players');
     if (playersEl) {
       let html = '';
-      // показываем места 0..maxPlayers-1
       const byBeat = {};
       state.players.forEach((p) => { if (p.seat >= 0) byBeat[p.seat] = p; });
-      for (let s = 0; s < (state.maxPlayers || 4); s++) {
+      for (let s = 0; s < maxPlayers; s++) {
         const p = byBeat[s];
         html += `<div class="waiting-player ${p ? 'filled' : 'empty'}">` +
           (p ? `${esc(p.name)}${p.isBot ? ' 🤖' : ''}` : '— свободно —') +
@@ -304,16 +339,26 @@
       playersEl.innerHTML = html;
     }
 
+    // код приватной комнаты
+    const codeRow = document.getElementById('waiting-code-row');
+    const codeVal = document.getElementById('waiting-code-val');
+    if (codeRow) codeRow.classList.toggle('hidden', !MP._roomCode);
+    if (codeVal) codeVal.textContent = MP._roomCode || '';
+
+    // строка выбора числа игроков (только для хоста)
+    const maxRow = document.getElementById('waiting-max-row');
+    if (maxRow) maxRow.classList.toggle('hidden', !MP.isHost);
+    document.querySelectorAll('.max-btn').forEach((btn) => {
+      btn.classList.toggle('active', parseInt(btn.dataset.n, 10) === maxPlayers);
+    });
+
     const hintEl = document.getElementById('waiting-hint');
     const humans = countHumans(state);
     const min = 2;
     if (hintEl) hintEl.textContent = humans < min ? `Нужно ещё ${min - humans} игрока` : 'Можно начинать!';
 
     const startBtn = document.getElementById('waiting-start-btn');
-    if (startBtn) {
-      const canStart = MP.isHost && humans >= min;
-      startBtn.classList.toggle('hidden', !canStart);
-    }
+    if (startBtn) startBtn.classList.toggle('hidden', !(MP.isHost && humans >= min));
   }
 
   function updateFinishedUI(state) {
@@ -397,11 +442,73 @@
       hide('countdown-overlay');
       showLobby();
     });
+
+    // выбор числа игроков в комнате ожидания (только хост)
+    document.querySelectorAll('.max-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const n = parseInt(btn.dataset.n, 10);
+        if (MP.room) MP.room.send('setmax', n);
+      });
+    });
+
+    // покинуть комнату во время игры
+    document.getElementById('game-leave-btn')?.addEventListener('click', async () => {
+      if (MP.room) {
+        MP._leaving = true;
+        try { await MP.room.leave(true); } catch (e) {}
+        MP.room = null;
+        MP._leaving = false;
+      }
+      MP.enabled = false;
+      MP.mySeat = -1;
+      window.__viewRot = 0;
+      if (typeof redrawBoard === 'function') redrawBoard();
+      if (typeof refreshControls === 'function') refreshControls();
+      await showLobby();
+    });
+    document.getElementById('finished-rematch')?.addEventListener('click', () => {
+      if (MP.room) MP.room.send('rematch');
+    });
+
     document.getElementById('finished-close')?.addEventListener('click', async () => {
       hide('finished-overlay');
       if (MP.room) { try { MP.room.leave(); } catch (e) {} MP.room = null; }
       MP.enabled = false; MP.mySeat = -1;
       await showLobby();
+    });
+
+    // фильтр по числу игроков
+    document.querySelectorAll('.filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        _filter = parseInt(btn.dataset.f, 10);
+        document.querySelectorAll('.filter-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        renderRooms();
+      });
+    });
+
+    // вход по коду приватной комнаты
+    async function joinByCode() {
+      const input = document.getElementById('lobby-code-input');
+      const code = (input?.value || '').toUpperCase().trim();
+      if (!code) return;
+      try {
+        const resp = await fetch(`/find?code=${encodeURIComponent(code)}`);
+        if (!resp.ok) { alert('Комната не найдена'); return; }
+        const data = await resp.json();
+        if (data.roomId) joinRoom(data.roomId);
+        else alert('Комната не найдена');
+      } catch (e) { alert('Ошибка поиска'); }
+    }
+    document.getElementById('lobby-code-join')?.addEventListener('click', joinByCode);
+    document.getElementById('lobby-code-input')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') joinByCode();
+      // автоверхний регистр
+      setTimeout(() => { if (e.target) e.target.value = e.target.value.toUpperCase(); }, 0);
+    });
+
+    // копировать код комнаты
+    document.getElementById('waiting-copy-code')?.addEventListener('click', () => {
+      if (MP._roomCode) navigator.clipboard?.writeText(MP._roomCode).catch(() => {});
     });
   }
 

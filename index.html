@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=83">
+  <link rel="stylesheet" href="css/style.css?v=85">
 </head>
 <body>
 
@@ -42,6 +42,7 @@
       <button id="mode-btn">🔌 Играть локально</button>
       <button id="bot-btn">🤖 Бот</button>
       <button id="art-btn">🎨 Арт</button>
+      <button id="game-leave-btn" class="hidden" title="Покинуть комнату">⬅ Выйти</button>
       <button id="log-btn" style="display:none">⬇ Лог</button>
       <div id="mp-controls">
         <input id="name-input" type="text" maxlength="16" placeholder="Ваше имя" />
@@ -54,20 +55,41 @@
   <div id="lobby-overlay" class="hidden" role="dialog" aria-modal="true">
     <div id="lobby-modal">
       <h2 id="lobby-title">🔒 Prison Escape</h2>
-      <div id="lobby-create-bar">
-        <span>Игроков:</span>
-        <select id="lobby-maxplayers">
-          <option value="2">2</option>
-          <option value="3">3</option>
-          <option value="4" selected>4</option>
-        </select>
-        <label id="lobby-bots-label"><input type="checkbox" id="lobby-fillbots"> боты</label>
-        <button id="lobby-create-btn">+ Создать</button>
+
+      <!-- Фильтр по числу игроков -->
+      <div id="lobby-filter-row">
+        <span>Показать:</span>
+        <button class="filter-btn active" data-f="0">Все</button>
+        <button class="filter-btn" data-f="2">2</button>
+        <button class="filter-btn" data-f="3">3</button>
+        <button class="filter-btn" data-f="4">4</button>
       </div>
+
+      <!-- Список комнат-столов -->
       <div id="lobby-rooms-wrap">
         <p id="lobby-empty-hint">Нет открытых комнат</p>
         <div id="lobby-rooms-list"></div>
       </div>
+
+      <!-- Нижняя панель: создать + войти по коду -->
+      <div id="lobby-bottom">
+        <div id="lobby-create-bar">
+          <span>Новая:</span>
+          <select id="lobby-maxplayers">
+            <option value="2">2</option>
+            <option value="3">3</option>
+            <option value="4" selected>4</option>
+          </select>
+          <span>игр.</span>
+          <label id="lobby-private-label"><input type="checkbox" id="lobby-private"> 🔒 Приват</label>
+          <button id="lobby-create-btn">+ Создать</button>
+        </div>
+        <div id="lobby-code-row">
+          <input id="lobby-code-input" placeholder="Код комнаты" maxlength="6" autocomplete="off" spellcheck="false">
+          <button id="lobby-code-join">Войти</button>
+        </div>
+      </div>
+
       <button id="lobby-offline-btn">🔌 Играть локально</button>
     </div>
   </div>
@@ -75,7 +97,17 @@
   <!-- ══ WAITING ROOM: ожидание игроков внутри комнаты ══ -->
   <div id="waiting-overlay" class="hidden" role="dialog" aria-modal="true">
     <div id="waiting-modal">
-      <h2>Ожидание игроков</h2>
+      <h2 id="waiting-room-name">Ожидание игроков</h2>
+      <div id="waiting-code-row" class="hidden">
+        🔒 Код: <strong id="waiting-code-val"></strong>
+        <button id="waiting-copy-code" title="Скопировать код">📋</button>
+      </div>
+      <div id="waiting-max-row" class="hidden">
+        <span>Игроков:</span>
+        <button class="max-btn" data-n="2">2</button>
+        <button class="max-btn" data-n="3">3</button>
+        <button class="max-btn" data-n="4">4</button>
+      </div>
       <div id="waiting-players"></div>
       <p id="waiting-hint">Ждём игроков…</p>
       <button id="waiting-start-btn" class="hidden">▶ Начать игру</button>
@@ -93,7 +125,8 @@
     <div id="finished-modal">
       <div id="finished-icon">🏆</div>
       <h2 id="finished-text">Победитель!</h2>
-      <button id="finished-close">OK</button>
+      <button id="finished-rematch">🔄 Ещё раз</button>
+      <button id="finished-close">В лобби</button>
     </div>
   </div>
 
@@ -196,15 +229,15 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=83"></script>
-  <script src="js/topology.js?v=83"></script>
-  <script src="js/board.js?v=83"></script>
-  <script src="js/engine.js?v=83"></script>
-  <script src="js/debug.js?v=83"></script>
-  <script src="js/sound.js?v=83"></script>
-  <script src="js/game.js?v=83"></script>
-  <script src="js/net.js?v=83"></script>
-  <script src="js/bot.js?v=83"></script>
+  <script src="js/colyseus.js?v=85"></script>
+  <script src="js/topology.js?v=85"></script>
+  <script src="js/board.js?v=85"></script>
+  <script src="js/engine.js?v=85"></script>
+  <script src="js/debug.js?v=85"></script>
+  <script src="js/sound.js?v=85"></script>
+  <script src="js/game.js?v=85"></script>
+  <script src="js/net.js?v=85"></script>
+  <script src="js/bot.js?v=85"></script>
 
 </body>
 </html>

@@ -23,6 +23,15 @@ function serverLog(msg) {
   catch (e) { /* ignore */ }
 }
 
+// ---- Helpers -------------------------------------------------------------
+
+function generateCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let c = '';
+  for (let i = 0; i < 5; i++) c += chars[Math.floor(Math.random() * chars.length)];
+  return c;
+}
+
 // ---- Synchronised state --------------------------------------------------
 
 class Player extends Schema {
@@ -103,12 +112,15 @@ class GameRoom extends Room {
       : MAX_SEATS;
     this.fillBots = !!(options && options.fillBots);
     this.preCreated = !!(options && options.preCreated);
-    this.autoDispose = !this.preCreated; // пресет-комнаты не умирают от пустоты
+    this.isPrivate = !!(options && options.private);
+    this.autoDispose = !this.preCreated;
     this.minPlayers = 2;
     this.hostSessionId = "";
     this._rollTimer = null;
     this._startTimer = null;
     this._emptyTimer = null;
+    this._finishedTimer = null;
+    this._roomCode = this.isPrivate ? generateCode() : null;
 
     this._roomName = options && options.roomName
       ? String(options.roomName).slice(0, 24)
@@ -144,6 +156,26 @@ class GameRoom extends Room {
       if (this.roomPhase === "playing" || this.roomPhase === "finished") this.resetGame();
     });
 
+    this.onMessage("rematch", (client) => {
+      if (this.roomPhase !== "finished") return;
+      if (this.humansCount() < this.minPlayers) return;
+      if (this._finishedTimer) { this._finishedTimer.clear(); this._finishedTimer = null; }
+      this.removeBots();
+      this.toStarting(true);
+      serverLog(`room ${this.roomId} rematch by seat${this.seatOf(client)}`);
+    });
+
+    this.onMessage("setmax", (client, n) => {
+      if (client.sessionId !== this.hostSessionId) return;
+      if (this.roomPhase !== "waiting") return;
+      const max = Math.min(Math.max(2, n | 0), MAX_SEATS);
+      this.maxClients = max;
+      this.state.maxPlayers = max;
+      this._syncMeta();
+      if (this.humansCount() >= max) this.toStarting();
+      else this.sync();
+    });
+
     // waiting → dispose если за 90 с не набралось игроков (пресет-комнаты не умирают)
     if (!this.preCreated) {
       this._emptyTimer = this.clock.setTimeout(() => {
@@ -160,14 +192,18 @@ class GameRoom extends Room {
   // ── metadata ──────────────────────────────────────────────────────────────
 
   _syncMeta() {
-    const names = [];
-    for (const [, p] of this.state.players) if (!p.isBot) names.push(p.name);
+    const byBeat = {};
+    for (const [, p] of this.state.players) if (!p.isBot && p.seat >= 0) byBeat[p.seat] = p.name;
+    const playerNames = [];
+    for (let s = 0; s < this.maxClients; s++) playerNames.push(byBeat[s] || null);
     this.setMetadata({
       name: this._roomName,
       roomPhase: this.state.roomPhase,
       players: this.humansCount(),
       maxPlayers: this.maxClients,
-      playerNames: names,
+      playerNames,
+      code: this._roomCode,
+      private: !!this.isPrivate,
     });
   }
 
@@ -186,8 +222,8 @@ class GameRoom extends Room {
     this.sync();
   }
 
-  toStarting() {
-    if (this.roomPhase !== "waiting") return;
+  toStarting(force = false) {
+    if (!force && this.roomPhase !== "waiting") return;
     if (this._emptyTimer) { this._emptyTimer.clear(); this._emptyTimer = null; }
     this.state.roomPhase = "starting";
     if (this.fillBots) this.fillSeatsWithBots();
@@ -220,12 +256,13 @@ class GameRoom extends Room {
 
   toFinished(winnerSeat) {
     if (this._startTimer) { this._startTimer.clear(); this._startTimer = null; }
+    if (this._finishedTimer) { this._finishedTimer.clear(); this._finishedTimer = null; }
     this.state.roomPhase = "finished";
     this.winner = winnerSeat;
     this.phase = "over";
     this._syncMeta();
-    // пресет-комната после показа результатов возвращается в waiting
-    this.clock.setTimeout(() => {
+    this._finishedTimer = this.clock.setTimeout(() => {
+      this._finishedTimer = null;
       if (this.preCreated) { this.removeBots(); this.state.players.clear(); this.unlock(); this.toWaiting(); }
       else this.disconnect();
     }, 15_000);
@@ -257,6 +294,8 @@ class GameRoom extends Room {
       sessionId: client.sessionId,
       seat: p.seat,
       isHost: client.sessionId === this.hostSessionId,
+      code: this._roomCode,
+      isPrivate: this.isPrivate,
     });
 
     if (p.seat >= 0 && !this.occupiedSeats().has(this.turn)) {
@@ -719,6 +758,16 @@ const MAX_BODY = 64 * 1024;
 const MAX_FILE = 5 * 1024 * 1024;
 
 http.createServer((req, res) => {
+  // GET /find?code=XXXXX — поиск приватной комнаты по коду
+  if (req.method === "GET" && req.url.startsWith("/find")) {
+    const code = (new URL(req.url, "http://localhost").searchParams.get("code") || "").toUpperCase().slice(0, 6);
+    matchMaker.query({ name: "prison" }).then((rooms) => {
+      const room = rooms.find((r) => r.metadata && r.metadata.code === code && r.metadata.roomPhase === "waiting");
+      res.writeHead(room ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(room ? { roomId: room.roomId } : {}));
+    }).catch(() => { res.writeHead(500); res.end("{}"); });
+    return;
+  }
   if (req.method !== "POST") { res.writeHead(405); return res.end(); }
   let body = "", aborted = false;
   req.on("data", (chunk) => {

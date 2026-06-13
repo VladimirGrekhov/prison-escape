@@ -290,6 +290,15 @@ body.art-mode .die {
 #mode-btn:hover,  #log-btn:hover,  #art-btn:hover  { background: var(--btn-hover); }
 #mode-btn:active, #log-btn:active, #art-btn:active { transform: scale(0.96); }
 
+#game-leave-btn {
+  padding: 6px 14px; font-size: 13px; font-weight: 600; border-radius: 16px;
+  cursor: pointer; border: none; transition: background 0.15s, transform 0.1s;
+  background: #c0392b; color: #fff;
+}
+#game-leave-btn:hover { background: #a93226; }
+#game-leave-btn:active { transform: scale(0.96); }
+#game-leave-btn.hidden { display: none; }
+
 #mp-controls {
   display: none; /* shown by net.js only when online */
   gap: 8px;
@@ -380,67 +389,91 @@ body.art-mode .die {
 }
 #lobby-title { font-size: 26px; text-align: center; letter-spacing: 1px; }
 
-#lobby-create-bar {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  background: var(--wrap-bg); border-radius: 10px; padding: 12px 16px;
+/* ══ LOBBY FILTER ════════════════════════════════════════════════════════ */
+#lobby-filter-row {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--status-text);
 }
-#lobby-create-bar span { font-size: 15px; }
+.filter-btn {
+  padding: 4px 14px; border-radius: 14px;
+  border: 2px solid var(--die-border);
+  background: var(--btn-bg); color: var(--btn-text);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.filter-btn:hover { background: var(--btn-hover); }
+.filter-btn.active { background: #4a9c4a; color: #fff; border-color: #4a9c4a; }
+
+/* ══ LOBBY TABLE CARDS ═══════════════════════════════════════════════════ */
+#lobby-rooms-wrap { display: flex; flex-direction: column; gap: 10px; min-height: 80px; flex: 1; overflow-y: auto; }
+#lobby-empty-hint { color: var(--status-text); font-size: 15px; text-align: center; padding: 20px 0; }
+
+.room-table-card {
+  background: var(--wrap-bg); border: 2px solid var(--wrap-border); border-radius: 14px;
+  padding: 14px 16px; cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.room-table-card:hover { border-color: #4a9c4a; box-shadow: 0 2px 14px rgba(74,156,74,0.2); }
+.room-table-card.room-full { opacity: 0.55; cursor: default; pointer-events: none; }
+.rtc-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.rtc-name { font-size: 16px; font-weight: 700; }
+.rtc-count { font-size: 12px; color: var(--status-text); background: var(--die-bg); border-radius: 20px; padding: 2px 9px; }
+.rtc-seats { display: flex; gap: 12px; flex-wrap: wrap; }
+.rtc-seat { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 52px; }
+.rtc-avatar {
+  width: 48px; height: 48px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 800;
+  transition: transform 0.12s;
+}
+.rtc-seat.filled .rtc-avatar { color: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+.rtc-seat.empty .rtc-avatar {
+  background: transparent !important;
+  border: 2px dashed var(--die-border);
+  color: var(--status-text); font-size: 24px;
+}
+.rtc-seat.empty:hover .rtc-avatar { border-color: #4a9c4a; color: #4a9c4a; transform: scale(1.1); }
+.rtc-label {
+  font-size: 11px; color: var(--status-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 58px; text-align: center;
+}
+.rtc-seat.filled .rtc-label { color: var(--die-text); font-weight: 600; }
+
+/* ══ LOBBY BOTTOM (создать + код) ════════════════════════════════════════ */
+#lobby-bottom {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center; justify-content: space-between;
+  padding-top: 10px; border-top: 1px solid var(--wrap-border);
+}
+#lobby-create-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px;
+}
 #lobby-create-bar select {
   background: var(--die-bg); color: var(--die-text);
   border: 1px solid var(--die-border); border-radius: 7px;
-  padding: 5px 8px; font-size: 15px;
+  padding: 5px 8px; font-size: 14px;
 }
-#lobby-bots-label { font-size: 14px; display: flex; align-items: center; gap: 5px; cursor: pointer; }
+#lobby-private-label { font-size: 13px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
 #lobby-create-btn {
-  margin-left: auto; padding: 8px 22px;
+  padding: 7px 18px;
   background: var(--btn-bg); color: var(--btn-text);
-  border: none; border-radius: 9px; cursor: pointer; font-size: 15px; font-weight: 600;
+  border: none; border-radius: 9px; cursor: pointer; font-size: 14px; font-weight: 600;
   transition: background 0.15s;
 }
 #lobby-create-btn:hover { background: var(--btn-hover); }
 
-#lobby-rooms-wrap { display: flex; flex-direction: column; gap: 10px; min-height: 80px; }
-#lobby-empty-hint { color: var(--status-text); font-size: 15px; text-align: center; padding: 16px 0; }
-
-.lobby-room-card {
-  display: flex; align-items: stretch; gap: 0;
-  background: var(--wrap-bg); border-radius: 12px;
-  border: 1px solid var(--wrap-border); overflow: hidden;
+#lobby-code-row { display: flex; gap: 6px; align-items: center; }
+#lobby-code-input {
+  padding: 6px 10px; border-radius: 8px;
+  border: 2px solid var(--die-border); background: var(--die-bg); color: var(--die-text);
+  font-size: 15px; font-weight: 800; width: 108px;
+  text-transform: uppercase; letter-spacing: 3px; text-align: center;
 }
-.lobby-room-info {
-  flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px;
+#lobby-code-join {
+  padding: 6px 14px; border-radius: 8px; background: #2980b9; color: #fff;
+  border: none; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s;
 }
-.lobby-room-header {
-  display: flex; align-items: center; gap: 10px;
-}
-.lobby-room-name { font-size: 17px; font-weight: 700; }
-.lobby-room-count {
-  font-size: 13px; color: var(--status-text);
-  background: var(--die-bg); border-radius: 20px; padding: 2px 9px;
-}
-.lobby-room-slots {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-}
-.lobby-slot {
-  padding: 5px 8px; border-radius: 7px; font-size: 13px;
-  text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.lobby-slot.filled {
-  background: var(--die-bg); color: var(--die-text); font-weight: 600;
-}
-.lobby-slot.empty {
-  background: rgba(0,0,0,0.1); color: var(--status-text); font-style: italic;
-}
-.lobby-room-join {
-  display: flex; align-items: center; padding: 0 14px;
-  border-left: 1px solid var(--wrap-border);
-}
-.lobby-room-join button {
-  padding: 10px 18px; background: var(--btn-bg); color: var(--btn-text);
-  border: none; border-radius: 9px; cursor: pointer; font-size: 15px; font-weight: 600;
-  transition: background 0.15s; white-space: nowrap;
-}
-.lobby-room-join button:hover { background: var(--btn-hover); }
+#lobby-code-join:hover { background: #1f6aa0; }
 
 #lobby-offline-btn {
   align-self: center; padding: 8px 20px;
@@ -467,6 +500,14 @@ body.art-mode .die {
 }
 #waiting-modal h2 { font-size: 20px; }
 
+#waiting-code-row {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  font-size: 14px; color: var(--status-text);
+}
+#waiting-code-row.hidden { display: none; }
+#waiting-code-val { font-size: 22px; font-weight: 900; letter-spacing: 4px; color: var(--die-text); font-family: monospace; }
+#waiting-copy-code { background: none; border: none; cursor: pointer; font-size: 16px; padding: 2px; }
+
 #waiting-players { display: flex; flex-direction: column; gap: 6px; }
 .waiting-player {
   padding: 8px 14px; border-radius: 8px; font-size: 15px;
@@ -475,6 +516,23 @@ body.art-mode .die {
 .waiting-player.empty { color: var(--status-text); font-style: italic; }
 
 #waiting-hint { font-size: 14px; color: var(--status-text); }
+
+/* Выбор числа игроков (хост) */
+#waiting-max-row {
+  display: flex; align-items: center; gap: 8px; justify-content: center;
+  font-size: 14px; color: var(--status-text);
+}
+#waiting-max-row.hidden { display: none; }
+.max-btn {
+  padding: 4px 14px; border-radius: 16px; border: 2px solid var(--die-border);
+  background: var(--btn-bg); color: var(--btn-text); font-size: 14px;
+  font-weight: 700; cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.max-btn:hover { background: var(--btn-hover); }
+.max-btn.active {
+  background: var(--accent, #4a9c4a); color: #fff;
+  border-color: var(--accent, #4a9c4a);
+}
 
 #waiting-start-btn {
   padding: 10px 24px; background: #4a9c4a; color: #fff;
@@ -525,6 +583,12 @@ body.art-mode .die {
 }
 #finished-icon { font-size: 56px; }
 #finished-text { font-size: 22px; }
+#finished-rematch {
+  padding: 10px 28px; background: #4a9c4a; color: #fff;
+  border: none; border-radius: 10px; cursor: pointer; font-size: 16px; font-weight: 600;
+  transition: background 0.15s;
+}
+#finished-rematch:hover { background: #3a8c3a; }
 #finished-close {
   padding: 10px 28px; background: var(--btn-bg); color: var(--btn-text);
   border: none; border-radius: 10px; cursor: pointer; font-size: 16px;
