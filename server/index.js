@@ -333,8 +333,18 @@ class GameRoom extends Room {
     } catch (e) {
       this.botify(client.sessionId);
       if (this.humansCount() === 0) {
-        serverLog(`room ${this.roomId}: no humans left → disconnect`);
-        this.disconnect();
+        if (this.preCreated) {
+          serverLog(`room ${this.roomId}: no humans left → reset to waiting`);
+          if (this._startTimer) { this._startTimer.clear(); this._startTimer = null; }
+          if (this._finishedTimer) { this._finishedTimer.clear(); this._finishedTimer = null; }
+          this.removeBots();
+          this.state.players.clear();
+          this.unlock();
+          this.toWaiting();
+        } else {
+          serverLog(`room ${this.roomId}: no humans left → disconnect`);
+          this.disconnect();
+        }
       }
       this.sync();
     }
