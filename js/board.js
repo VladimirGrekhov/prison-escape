@@ -45,7 +45,9 @@ const ENTRY_CELLS = new Set([
 // сервером) и доступна здесь как глобали.
 
 const X_OFF = R * 0.45; // сдвиг центра «Х» наружу (как у нарисованного крупного кружка)
-const X_SHIFT = [[0, -X_OFF], [X_OFF, 0], [0, X_OFF], [-X_OFF, 0]];
+// Наружу от креста: место 0 — вверх, 1 — вправо, 2 — влево, 3 — вниз
+// (ровно как нарисованные кружки «Х» ниже).
+const X_SHIFT = [[0, -X_OFF], [X_OFF, 0], [-X_OFF, 0], [0, X_OFF]];
 function xCenter(seat) {
   const [r, c] = X_GRID[seat];
   return { x: boardPx(c) + X_SHIFT[seat][0], y: boardPy(r) + X_SHIFT[seat][1] };

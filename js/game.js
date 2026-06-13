@@ -348,6 +348,58 @@ function firstUsableSlot() {
   return -1;
 }
 
+// Снимок/восстановление фишек всех мест для lookahead-проверок.
+function snapshotPieces() {
+  return ENGINE.pieces.map(row => row.map(p => ({ ...p })));
+}
+function restorePieces(snap) {
+  for (let s = 0; s < ENGINE.pieces.length; s++)
+    for (let i = 0; i < ENGINE.pieces[s].length; i++)
+      Object.assign(ENGINE.pieces[s][i], snap[s][i]);
+}
+
+// Максимальное число кубиков, которые можно потратить из текущего состояния движка.
+// dArr/uArr — копии dice/used с учётом уже потраченных на этом шаге.
+function _maxDiceRec(seat, dArr, uArr, ctx) {
+  let best = 0;
+  const total = uArr.filter(u => !u).length;
+  if (total === 0) return 0;
+  for (let k = 0; k < dArr.length; k++) {
+    if (uArr[k]) continue;
+    const d = dArr[k];
+    // Обычные ходы.
+    for (const i of ENGINE.legalForDie(seat, d, ctx)) {
+      const snap = snapshotPieces();
+      ENGINE.applyDie(seat, i, d);
+      uArr[k] = true;
+      const sub = _maxDiceRec(seat, dArr, uArr, ctx);
+      uArr[k] = false;
+      restorePieces(snap);
+      best = Math.max(best, 1 + sub);
+      if (best === total) return best;
+    }
+    // Выкуп как действие (кубик 6 + пленная фишка).
+    if (d === 6) {
+      for (let i = 0; i < ENGINE.pieces[seat].length; i++) {
+        if (!ENGINE.canRedeem(seat, i)) continue;
+        const snap = snapshotPieces();
+        ENGINE.redeem(seat, i);
+        uArr[k] = true;
+        const sub = _maxDiceRec(seat, dArr, uArr, ctx);
+        uArr[k] = false;
+        restorePieces(snap);
+        best = Math.max(best, 1 + sub);
+        if (best === total) return best;
+      }
+    }
+  }
+  return best;
+}
+
+function maxDiceUsable(seat, ctx) {
+  return _maxDiceRec(seat, dice.slice(), used.slice(), ctx);
+}
+
 function selectDie(idx) {
   if (idx < 0 || idx >= dice.length || used[idx]) return;
   if (ENGINE.legalForDie(currentPlayer, dice[idx], { doubleOne }).length === 0) return;
@@ -576,6 +628,16 @@ function onBoardClick(seat, i) {
 
     // Пленная фишка: выкуп за 6 — возвращается в свою тюрьму; захватчик получает бонус-6.
     if (piece.captor >= 0) {
+      // Нельзя выкупать, если есть последовательность ходов, использующая больше кубиков.
+      const maxPossible = maxDiceUsable(currentPlayer, { doubleOne });
+      if (maxPossible > 1) {
+        const snap = snapshotPieces();
+        const usedAfter = used.slice(); usedAfter[slot] = true;
+        ENGINE.redeem(currentPlayer, i);
+        const afterRansom = 1 + _maxDiceRec(currentPlayer, dice.slice(), usedAfter, { doubleOne });
+        restorePieces(snap);
+        if (afterRansom < maxPossible) return;
+      }
       if (isOnline()) { MP.act('redeem', i, slot); return; }
       const captor = ENGINE.redeem(currentPlayer, i);
       used[slot] = true;
