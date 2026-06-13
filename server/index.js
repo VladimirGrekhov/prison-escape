@@ -1,12 +1,7 @@
 // Prison Escape — authoritative multiplayer server (Colyseus 0.16).
-//
-// The server runs the SAME game engine as the browser (js/engine.js + js/topology.js,
-// copied to ./shared on deploy) and is authoritative: clients send intents
-// (roll / act / bm) and render the synchronised state.
-const { Server, Room } = require("colyseus");
+const { Server, Room, LobbyRoom } = require("colyseus");
 const { Schema, MapSchema, ArraySchema, defineTypes } = require("@colyseus/schema");
 
-// Shared engine/topology: ./shared in production (/opt), ../js when run from the repo.
 let TOP, createEngine;
 try {
   TOP = require("./shared/topology");
@@ -17,10 +12,9 @@ try {
 }
 
 const MAX_SEATS = 4;
-const ROLL_MS = 1500;      // dice "fly" lock (matches client animation)
+const ROLL_MS = 1500;
 const RECONNECT_SEC = 30;
 
-// Серверный лог (онлайн-игры) — в тот же файл, что и клиентский ?debug=1.
 const fs = require("fs");
 const path = require("path");
 const LOG_FILE = path.join(__dirname, "logs", "client.log");
@@ -37,17 +31,18 @@ class Player extends Schema {
     this.seat = -1;
     this.name = "";
     this.connected = true;
+    this.isBot = false;
   }
 }
-defineTypes(Player, { seat: "int8", name: "string", connected: "boolean" });
+defineTypes(Player, { seat: "int8", name: "string", connected: "boolean", isBot: "boolean" });
 
 class Piece extends Schema {
   constructor() {
     super();
-    this.where = "prison";   // prison | track | lane | home
+    this.where = "prison";
     this.progress = 0;
     this.bm = false;
-    this.captor = -1;        // -1 own prison; >=0 held captive by that seat
+    this.captor = -1;
   }
 }
 defineTypes(Piece, { where: "string", progress: "uint8", bm: "boolean", captor: "int8" });
@@ -55,21 +50,26 @@ defineTypes(Piece, { where: "string", progress: "uint8", bm: "boolean", captor: 
 class GameState extends Schema {
   constructor() {
     super();
-    this.players = new MapSchema(); // sessionId -> Player
-    this.pieces = new ArraySchema(); // 20 Piece (index = seat*5 + i)
+    this.players = new MapSchema();
+    this.pieces = new ArraySchema();
     this.turn = 0;
-    this.phase = "idle";            // idle | rolling | move | bm | over
-    this.dice = new ArraySchema();  // current roll values (incl. bonus 6s)
-    this.used = new ArraySchema();  // per-die spent flags
-    this.bonus = new ArraySchema(); // pending bonus 6s per seat (4)
+    this.phase = "idle";          // idle | rolling | move | bm | over  (game mechanics)
+    this.dice = new ArraySchema();
+    this.used = new ArraySchema();
+    this.bonus = new ArraySchema();
     this.doubleOne = false;
     this.winner = -1;
-    this.bmSeat = -1;               // pending БМ divert decision
+    this.bmSeat = -1;
     this.bmI = -1;
-    this.karzerSeat = -1;           // дубль 1: кого можно забрать из карцера кликом
+    this.karzerSeat = -1;
     this.karzerI = -1;
-    this.seq = 0;                   // bumps on each roll -> dice animation
-    this.rev = 0;                   // bumps on EVERY sync -> guaranteed client refresh
+    this.seq = 0;
+    this.rev = 0;
+    // lobby / lifecycle
+    this.roomPhase = "waiting";   // waiting | starting | playing | finished
+    this.countdown = 0;
+    this.maxPlayers = 4;
+    this.hostSeat = -1;
   }
 }
 defineTypes(GameState, {
@@ -88,35 +88,47 @@ defineTypes(GameState, {
   karzerI: "int8",
   seq: "uint32",
   rev: "uint32",
+  roomPhase: "string",
+  countdown: "uint8",
+  maxPlayers: "uint8",
+  hostSeat: "int8",
 });
 
 // ---- Room ----------------------------------------------------------------
 
 class GameRoom extends Room {
-  onCreate() {
-    this.maxClients = 16;
+  onCreate(options) {
+    this.maxClients = options && options.maxPlayers
+      ? Math.min(Math.max(2, options.maxPlayers | 0), MAX_SEATS)
+      : MAX_SEATS;
+    this.fillBots = !!(options && options.fillBots);
+    this.minPlayers = 2;
+    this.hostSessionId = "";
+    this._rollTimer = null;
+    this._startTimer = null;
+    this._emptyTimer = null;
+
+    const roomName = options && options.roomName
+      ? String(options.roomName).slice(0, 24)
+      : `Комната ${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
     this.setState(new GameState());
+    this.state.maxPlayers = this.maxClients;
     for (let k = 0; k < MAX_SEATS * 5; k++) this.state.pieces.push(new Piece());
     for (let s = 0; s < MAX_SEATS; s++) this.state.bonus.push(0);
 
     this.engine = createEngine();
-    this.turn = 0;
-    this.phase = "idle";
-    this.dice = [];
-    this.used = [];
-    this.bonus = [0, 0, 0, 0];
-    this.doubleOne = false;
-    this.turnDouble = false;
-    this.turnSix = false;
-    this.expressJumps = 0;
-    this.turnCaptures = 0;          // срубил в этом броске → доп. ход (не суммируется)
-    this.bonusPhase = false;        // бонусные «6» ходятся ДО броска кубиков
-    this.carryCaptures = 0;         // срубания бонусной фазы → доп. ход после броска
-    this.rollCaptureChances = [];   // фишки, которые могли срубить этим броском (карцер)
-    this.karzerHandled = false;     // освобождение по дублю 1 уже сработало в этом броске
-    this.bm = null;
-    this.winner = -1;
-    this.sync();
+    this._resetVars();
+
+    this.setMetadata({ name: roomName, roomPhase: "waiting", players: 0, maxPlayers: this.maxClients });
+
+    // ── message handlers ───────────────────────────────────────────────────
+
+    this.onMessage("start", (client) => {
+      if (client.sessionId !== this.hostSessionId) return;
+      if (this.roomPhase !== "waiting") return;
+      if (this.humansCount() >= this.minPlayers) this.toStarting();
+    });
 
     this.onMessage("roll", (c, m) => this.onRoll(c, m));
     this.onMessage("dbgdice", (c, m) => this.onDbgDice(c, m));
@@ -126,10 +138,197 @@ class GameRoom extends Room {
       const p = this.state.players.get(c.sessionId);
       if (p && typeof name === "string") p.name = name.slice(0, 16);
     });
-    this.onMessage("reset", () => this.resetGame());
+    this.onMessage("reset", () => {
+      if (this.roomPhase === "playing" || this.roomPhase === "finished") this.resetGame();
+    });
+
+    // waiting → dispose если за 90 с не набралось игроков
+    this._emptyTimer = this.clock.setTimeout(() => {
+      if (this.roomPhase === "waiting" && this.humansCount() < this.minPlayers) {
+        serverLog(`room ${this.roomId} empty timeout → disconnect`);
+        this.disconnect();
+      }
+    }, 90_000);
+
+    this.sync();
   }
 
-  // --- seat helpers ---
+  // ── lifecycle ─────────────────────────────────────────────────────────────
+
+  get roomPhase() { return this.state ? this.state.roomPhase : "waiting"; }
+
+  toWaiting() {
+    if (this._startTimer) { this._startTimer.clear(); this._startTimer = null; }
+    this.state.roomPhase = "waiting";
+    this.state.countdown = 0;
+    this.removeBots();
+    this.unlock();
+    this.setMetadata({ roomPhase: "waiting", players: this.humansCount() });
+    serverLog(`room ${this.roomId} → waiting`);
+    this.sync();
+  }
+
+  toStarting() {
+    if (this.roomPhase !== "waiting") return;
+    if (this._emptyTimer) { this._emptyTimer.clear(); this._emptyTimer = null; }
+    this.state.roomPhase = "starting";
+    if (this.fillBots) this.fillSeatsWithBots();
+    this.lock();
+    this.setMetadata({ roomPhase: "starting" });
+
+    let n = 3;
+    this.state.countdown = n;
+    this._startTimer = this.clock.setInterval(() => {
+      n--;
+      this.state.countdown = n;
+      if (n <= 0) {
+        this._startTimer.clear();
+        this._startTimer = null;
+        this.toPlaying();
+      }
+    }, 1000);
+    serverLog(`room ${this.roomId} → starting (${this.humansCount()} humans)`);
+    this.sync();
+  }
+
+  toPlaying() {
+    this.state.roomPhase = "playing";
+    this.state.countdown = 0;
+    this.setMetadata({ roomPhase: "playing" });
+    this.resetGame();
+    serverLog(`room ${this.roomId} → playing`);
+    this.sync();
+  }
+
+  toFinished(winnerSeat) {
+    if (this._startTimer) { this._startTimer.clear(); this._startTimer = null; }
+    this.state.roomPhase = "finished";
+    this.winner = winnerSeat;
+    this.phase = "over";
+    this.setMetadata({ roomPhase: "finished" });
+    this.clock.setTimeout(() => this.disconnect(), 15_000);
+    serverLog(`room ${this.roomId} → finished (winner seat${winnerSeat})`);
+    this.sync();
+  }
+
+  // ── join / leave ──────────────────────────────────────────────────────────
+
+  onJoin(client, options) {
+    const p = new Player();
+    p.seat = this.firstFreeSeat();
+    p.name = options && options.name
+      ? String(options.name).slice(0, 16)
+      : (p.seat >= 0 ? `Игрок ${p.seat + 1}` : "Зритель");
+    p.connected = true;
+    this.state.players.set(client.sessionId, p);
+
+    // первый игрок = хост
+    if (this.humansCount() === 1) {
+      this.hostSessionId = client.sessionId;
+      this.state.hostSeat = p.seat;
+    }
+
+    const humanCount = this.humansCount();
+    this.setMetadata({ players: humanCount });
+
+    client.send("welcome", {
+      sessionId: client.sessionId,
+      seat: p.seat,
+      isHost: client.sessionId === this.hostSessionId,
+    });
+
+    if (p.seat >= 0 && !this.occupiedSeats().has(this.turn)) {
+      this.turn = p.seat;
+    }
+
+    // зал полон → старт
+    if (this.roomPhase === "waiting" && humanCount >= this.maxClients) this.toStarting();
+    else this.sync();
+  }
+
+  async onLeave(client, consented) {
+    const p = this.state.players.get(client.sessionId);
+    if (p) p.connected = false;
+
+    if (this.roomPhase === "waiting" || this.roomPhase === "starting") {
+      // до игры — сразу убираем
+      this.removePlayer(client.sessionId);
+      if (client.sessionId === this.hostSessionId) this.rotateHost();
+      if (this.roomPhase === "starting" && this.humansCount() < this.minPlayers) this.toWaiting();
+      else {
+        this.setMetadata({ players: this.humansCount() });
+        this.sync();
+      }
+      return;
+    }
+
+    // в игре — ждём реконнект
+    try {
+      if (consented) throw new Error("left");
+      await this.allowReconnection(client, RECONNECT_SEC);
+      const back = this.state.players.get(client.sessionId);
+      if (back) back.connected = true;
+      this.sync();
+    } catch (e) {
+      this.botify(client.sessionId);
+      if (this.humansCount() === 0) {
+        serverLog(`room ${this.roomId}: no humans left → disconnect`);
+        this.disconnect();
+      }
+      this.sync();
+    }
+  }
+
+  // ── helpers ───────────────────────────────────────────────────────────────
+
+  humansCount() {
+    let n = 0;
+    for (const [, p] of this.state.players) if (!p.isBot) n++;
+    return n;
+  }
+
+  rotateHost() {
+    for (const [id, p] of this.state.players) {
+      if (!p.isBot) {
+        this.hostSessionId = id;
+        this.state.hostSeat = p.seat;
+        return;
+      }
+    }
+    this.hostSessionId = "";
+    this.state.hostSeat = -1;
+  }
+
+  fillSeatsWithBots() {
+    for (let seat = 0; seat < this.maxClients; seat++) {
+      if (!this.seatTaken(seat)) {
+        const botId = `bot_${seat}`;
+        const b = new Player();
+        b.seat = seat;
+        b.name = `Бот ${seat + 1}`;
+        b.connected = true;
+        b.isBot = true;
+        this.state.players.set(botId, b);
+      }
+    }
+  }
+
+  removeBots() {
+    for (const [id, p] of this.state.players) {
+      if (p.isBot) this.state.players.delete(id);
+    }
+  }
+
+  botify(sessionId) {
+    const p = this.state.players.get(sessionId);
+    if (!p) return;
+    p.isBot = true;
+    p.connected = true;
+    serverLog(`seat${p.seat} botified`);
+  }
+
+  // ── seat helpers ──────────────────────────────────────────────────────────
+
   seatOf(client) {
     const p = this.state.players.get(client.sessionId);
     return p ? p.seat : -1;
@@ -148,23 +347,8 @@ class GameRoom extends Room {
     return set;
   }
 
-  onJoin(client, options) {
-    const p = new Player();
-    p.seat = this.firstFreeSeat();
-    p.name = options && options.name
-      ? String(options.name).slice(0, 16)
-      : (p.seat >= 0 ? `Игрок ${p.seat + 1}` : "Зритель");
-    p.connected = true;
-    this.state.players.set(client.sessionId, p);
+  // ── turn flow ─────────────────────────────────────────────────────────────
 
-    if (p.seat >= 0 && !this.occupiedSeats().has(this.turn)) {
-      this.turn = p.seat;
-      this.sync();
-    }
-    client.send("welcome", { sessionId: client.sessionId, seat: p.seat });
-  }
-
-  // --- turn flow (ported from the offline client) ---
   ctx() { return { doubleOne: this.doubleOne }; }
   hasUnusedSix() { return this.dice.some((d, k) => !this.used[k] && d === 6); }
   firstUsableSlot() {
@@ -178,18 +362,17 @@ class GameRoom extends Room {
     if (this.hasUnusedSix() && this.engine.hasRedeemable(this.turn)) return true;
     return !!this.karzerOffer();
   }
-  // Дубль 1: кого сейчас можно забрать из карцера кликом ({seat,i} | null).
   karzerOffer() {
     if (!this.doubleOne || this.karzerHandled || this.bonusPhase) return null;
     return this.engine.karzerEligible(this.turn);
   }
 
   onRoll(client, m) {
+    if (this.roomPhase !== "playing") return;
     if (this.seatOf(client) !== this.turn) return;
     if (this.phase !== "idle" || this.winner >= 0) return;
     if (!this.occupiedSeats().has(this.turn)) return;
 
-    // Бонусные «6» за выкуп ходятся ДО броска (базовые слоты помечены занятыми).
     if (this.bonus[this.turn] > 0) {
       const n = this.bonus[this.turn];
       this.bonus[this.turn] = 0;
@@ -211,36 +394,34 @@ class GameRoom extends Room {
 
     let a = 1 + Math.floor(Math.random() * 6);
     let b = 1 + Math.floor(Math.random() * 6);
-    // Отладка: клиент с ?debug=1 может прислать заданные значения кубиков.
     const forced = Array.isArray(m) ? m.map((d) => d | 0).filter((d) => d >= 1 && d <= 6).slice(0, 2) : [];
     if (forced.length) { a = forced[0]; if (forced.length > 1) b = forced[1]; }
     this.dice = [a, b];
     this.used = [false, false];
     this.turnDouble = (a === b);
     this.doubleOne = (a === 1 && b === 1);
-    this.turnSix = (a === 6 || b === 6); // выпала 6 → доп. ход
+    this.turnSix = (a === 6 || b === 6);
     this.expressJumps = 0;
-    this.turnCaptures = this.carryCaptures || 0; // срубания бонусной фазы → доп. ход
+    this.turnCaptures = this.carryCaptures || 0;
     this.carryCaptures = 0;
     this.phase = "rolling";
     this.state.seq++;
     serverLog(`--- roll seat${this.turn} [${a},${b}]${this.turnDouble ? ' DOUBLE' : ''}${forced.length ? ' FORCED' : ''}`);
-    // Дубль 1: фишку из карцера можно забрать кликом (не автоматически).
     this.karzerHandled = false;
-    // Кто мог бы срубить этим броском (правило карцера на конце хода).
     this.rollCaptureChances = this.engine.captureChances(this.turn, this.dice, this.used, this.ctx());
     this.sync();
 
-    if (this._rollTimer) clearTimeout(this._rollTimer);
-    this._rollTimer = setTimeout(() => {
+    if (this._rollTimer) { this._rollTimer.clear(); this._rollTimer = null; }
+    this._rollTimer = this.clock.setTimeout(() => {
+      this._rollTimer = null;
       if (!this.hasAnyAction()) { this.endTurn(); }
       else { this.phase = "move"; }
       this.sync();
     }, ROLL_MS);
   }
 
-  // Отладка: замена ещё не потраченных базовых кубиков в фазе хода (?debug=1).
   onDbgDice(client, m) {
+    if (this.roomPhase !== "playing") return;
     if (this.seatOf(client) !== this.turn || this.phase !== "move") return;
     const f = Array.isArray(m) ? m.map((d) => d | 0).filter((d) => d >= 1 && d <= 6).slice(0, 2) : [];
     if (f.length < 2 || this.used[0] || this.used[1] || this.dice.length < 2) return;
@@ -255,16 +436,18 @@ class GameRoom extends Room {
   }
 
   onAct(client, m) {
+    if (this.roomPhase !== "playing") return;
     if (this.seatOf(client) !== this.turn || this.phase !== "move" || !m) return;
     const i = m.i | 0, slot = m.slot | 0, kind = m.kind;
+    const seat = this.turn;
+    const E = this.engine;
 
-    // Дубль 1: забрать фишку из карцера. Забор тратит кубики этого броска.
     if (kind === "karzer") {
       if (!this.karzerOffer()) return;
       this.karzerHandled = true;
-      const rel = this.engine.karzerOnDoubleOne(this.turn);
-      if (rel) serverLog(`seat${this.turn} КАРЦЕР дубль1: seat${rel.seat} piece${rel.i} ${rel.kind === 'home' ? 'домой' : 'в плен'}`);
-      this.used = this.used.map(() => true); // забор тратит кубики
+      const rel = E.karzerOnDoubleOne(seat);
+      if (rel) serverLog(`seat${seat} КАРЦЕР дубль1: seat${rel.seat} piece${rel.i} ${rel.kind === 'home' ? 'домой' : 'в плен'}`);
+      this.used = this.used.map(() => true);
       this.afterMove();
       this.sync();
       return;
@@ -272,8 +455,6 @@ class GameRoom extends Room {
 
     if (slot < 0 || slot >= this.dice.length || this.used[slot]) return;
     const die = this.dice[slot];
-    const seat = this.turn;
-    const E = this.engine;
 
     if (kind === "redeem") {
       if (die !== 6 || !E.canRedeem(seat, i)) return;
@@ -288,7 +469,7 @@ class GameRoom extends Room {
       this.used[slot] = true;
       serverLog(`seat${seat} piece${i} EXIT -> x${seat}`);
       this.afterMove();
-    } else if (kind === "express") { // 1 — следующая по кругу, 3 — противоположная
+    } else if (kind === "express") {
       if ((die !== 1 && die !== 3) || E.onExpress(seat, i) < 0) return;
       const res = E.expressJump(seat, i, die);
       this.turnCaptures += res.captured.length;
@@ -297,7 +478,7 @@ class GameRoom extends Room {
       serverLog(`seat${seat} piece${i} EXPRESS die${die} -> ${JSON.stringify(E.cellOf(seat, i))}` +
         `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}`);
       this.afterMove();
-    } else if (kind === "sum") { // ход одной фишкой на сумму двух базовых кубиков
+    } else if (kind === "sum") {
       if (this.used[0] || this.used[1] || this.dice.length < 2) return;
       const sum = this.dice[0] + this.dice[1];
       if (!E.canMove(seat, i, sum, this.ctx())) return;
@@ -309,7 +490,7 @@ class GameRoom extends Room {
       serverLog(`seat${seat} piece${i} SUM ${sum}${divert ? '+БМ' : ''} -> ${JSON.stringify(E.cellOf(seat, i))}` +
         `${res.captured.length ? ' CAPTURED ' + JSON.stringify(res.captured) : ''}${res.finished ? ' HOME' : ''}`);
       this.afterMove();
-    } else { // move (m.bm = сразу съехать на БМ, если ход закончился напротив него)
+    } else {
       if (!E.canMove(seat, i, die, this.ctx())) return;
       const res = E.applyDie(seat, i, die);
       this.turnCaptures += res.captured.length;
@@ -324,6 +505,7 @@ class GameRoom extends Room {
   }
 
   onBm(client, m) {
+    if (this.roomPhase !== "playing") return;
     if (this.phase !== "bm" || !this.bm || this.seatOf(client) !== this.bm.seat) return;
     if (m && m.divert) this.engine.divertToBM(this.bm.seat, this.bm.i);
     serverLog(`seat${this.bm.seat} piece${this.bm.i} ${m && m.divert ? '-> БМ' : 'остаётся'}`);
@@ -335,11 +517,11 @@ class GameRoom extends Room {
 
   afterMove() {
     const w = this.engine.winner();
-    if (w >= 0) { this.winner = w; this.phase = "over"; serverLog(`WINNER seat${w}`); return; }
+    if (w >= 0) { this.toFinished(w); return; }
     const next = this.firstUsableSlot();
     if (next >= 0) { this.phase = "move"; return; }
     if (this.hasUnusedSix() && this.engine.hasRedeemable(this.turn)) { this.phase = "move"; return; }
-    if (this.bonusPhase) { // бонусные 6 сыграны — обычный бросок, ход не переходит
+    if (this.bonusPhase) {
       this.bonusPhase = false;
       this.carryCaptures = this.turnCaptures; this.turnCaptures = 0;
       this.dice = []; this.used = [];
@@ -351,8 +533,6 @@ class GameRoom extends Room {
   }
 
   endTurn() {
-    // Карцер: была возможность срубить, но за весь бросок никого не срубил —
-    // первая из фишек, которая могла срубить, отправляется в карцер.
     if (this.winner < 0 && this.turnCaptures === 0 && this.rollCaptureChances.length) {
       const j = this.rollCaptureChances.find((i) => {
         const w = this.engine.pieces[this.turn][i].where;
@@ -364,12 +544,10 @@ class GameRoom extends Room {
       }
     }
     this.rollCaptureChances = [];
-
     this.dice = [];
     this.used = [];
     this.bm = null;
     this.phase = "idle";
-    // Дубль / срубание / экспресс дают один доп. бросок (не суммируются).
     const why = [];
     if (this.turnDouble) why.push("дубль");
     if (this.turnCaptures) why.push("срубил");
@@ -393,7 +571,6 @@ class GameRoom extends Room {
     }
   }
 
-  // Mirror engine + turn state into the synchronised schema.
   sync() {
     for (let s = 0; s < MAX_SEATS; s++) {
       for (let i = 0; i < 5; i++) {
@@ -416,24 +593,28 @@ class GameRoom extends Room {
     const ko = (this.phase === "move") ? this.karzerOffer() : null;
     this.state.karzerSeat = ko ? ko.seat : -1;
     this.state.karzerI = ko ? ko.i : -1;
-    this.state.rev = (this.state.rev + 1) >>> 0; // гарантированный триггер refresh у клиента
+    this.state.rev = (this.state.rev + 1) >>> 0;
   }
 
   resetGame() {
-    if (this._rollTimer) clearTimeout(this._rollTimer);
+    if (this._rollTimer) { this._rollTimer.clear(); this._rollTimer = null; }
     this.engine.newGame();
+    this._resetVars();
+    const occ = [...this.occupiedSeats()].sort((x, y) => x - y);
+    this.turn = occ.length ? occ[0] : 0;
+    this.sync();
+  }
+
+  _resetVars() {
     this.dice = []; this.used = []; this.bonus = [0, 0, 0, 0];
     this.doubleOne = false; this.turnDouble = false; this.turnSix = false; this.expressJumps = 0;
     this.turnCaptures = 0; this.bonusPhase = false; this.carryCaptures = 0;
     this.rollCaptureChances = [];
     this.karzerHandled = false;
     this.bm = null; this.winner = -1; this.phase = "idle";
-    const occ = [...this.occupiedSeats()].sort((x, y) => x - y);
-    this.turn = occ.length ? occ[0] : 0;
-    this.sync();
+    this.turn = 0;
   }
 
-  // A seat's player is gone: reset its pieces to prison and free its captives.
   freeSeat(seat) {
     for (let i = 0; i < 5; i++) {
       const p = this.engine.pieces[seat][i];
@@ -442,7 +623,7 @@ class GameRoom extends Room {
     for (let s = 0; s < MAX_SEATS; s++) {
       for (let i = 0; i < 5; i++) {
         const p = this.engine.pieces[s][i];
-        if (p.captor === seat) p.captor = -1; // освободить пленных
+        if (p.captor === seat) p.captor = -1;
       }
     }
     this.bonus[seat] = 0;
@@ -454,29 +635,16 @@ class GameRoom extends Room {
     const seat = p.seat;
     const wasTurn = seat === this.turn;
     this.state.players.delete(sessionId);
-    if (seat >= 0) this.freeSeat(seat);
+    if (seat >= 0 && this.roomPhase === "playing") this.freeSeat(seat);
 
     const occ = this.occupiedSeats();
     if (occ.size === 0) { this.resetGame(); return; }
-    if (wasTurn) {
-      if (this._rollTimer) clearTimeout(this._rollTimer);
+    if (wasTurn && this.roomPhase === "playing") {
+      if (this._rollTimer) { this._rollTimer.clear(); this._rollTimer = null; }
       this.dice = []; this.used = []; this.bm = null; this.phase = "idle";
       if (!occ.has(this.turn)) this.advanceTurn();
     }
     this.sync();
-  }
-
-  async onLeave(client, consented) {
-    const p = this.state.players.get(client.sessionId);
-    if (p) p.connected = false;
-    try {
-      if (consented) throw new Error("left");
-      await this.allowReconnection(client, RECONNECT_SEC);
-      const back = this.state.players.get(client.sessionId);
-      if (back) back.connected = true;
-    } catch (e) {
-      this.removePlayer(client.sessionId);
-    }
   }
 }
 
@@ -485,6 +653,7 @@ class GameRoom extends Room {
 const port = Number(process.env.PORT) || 2567;
 const host = process.env.HOST || "127.0.0.1";
 const gameServer = new Server();
+gameServer.define("lobby", LobbyRoom);
 gameServer.define("prison", GameRoom);
 gameServer.listen(port, host);
 console.log(`Prison Escape multiplayer listening on ws://${host}:${port}`);

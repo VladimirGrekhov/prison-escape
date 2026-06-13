@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=81">
+  <link rel="stylesheet" href="css/style.css?v=82">
 </head>
 <body>
 
@@ -47,6 +47,53 @@
         <input id="name-input" type="text" maxlength="16" placeholder="Ваше имя" />
         <button id="reset-btn" title="Начать заново">↺ Сброс</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ══ LOBBY: список комнат (до входа в комнату) ══ -->
+  <div id="lobby-overlay" class="hidden" role="dialog" aria-modal="true">
+    <div id="lobby-modal">
+      <h2 id="lobby-title">🔒 Prison Escape</h2>
+      <div id="lobby-create-bar">
+        <span>Игроков:</span>
+        <select id="lobby-maxplayers">
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4" selected>4</option>
+        </select>
+        <label id="lobby-bots-label"><input type="checkbox" id="lobby-fillbots"> боты</label>
+        <button id="lobby-create-btn">+ Создать</button>
+      </div>
+      <div id="lobby-rooms-wrap">
+        <p id="lobby-empty-hint">Нет открытых комнат</p>
+        <div id="lobby-rooms-list"></div>
+      </div>
+      <button id="lobby-offline-btn">🔌 Играть локально</button>
+    </div>
+  </div>
+
+  <!-- ══ WAITING ROOM: ожидание игроков внутри комнаты ══ -->
+  <div id="waiting-overlay" class="hidden" role="dialog" aria-modal="true">
+    <div id="waiting-modal">
+      <h2>Ожидание игроков</h2>
+      <div id="waiting-players"></div>
+      <p id="waiting-hint">Ждём игроков…</p>
+      <button id="waiting-start-btn" class="hidden">▶ Начать игру</button>
+      <button id="waiting-leave-btn">← Выйти</button>
+    </div>
+  </div>
+
+  <!-- ══ COUNTDOWN: 3-2-1 перед стартом ══ -->
+  <div id="countdown-overlay" class="hidden">
+    <div id="countdown-num">3</div>
+  </div>
+
+  <!-- ══ FINISHED: экран результатов ══ -->
+  <div id="finished-overlay" class="hidden" role="dialog" aria-modal="true">
+    <div id="finished-modal">
+      <div id="finished-icon">🏆</div>
+      <h2 id="finished-text">Победитель!</h2>
+      <button id="finished-close">OK</button>
     </div>
   </div>
 
@@ -149,15 +196,15 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=81"></script>
-  <script src="js/topology.js?v=81"></script>
-  <script src="js/board.js?v=81"></script>
-  <script src="js/engine.js?v=81"></script>
-  <script src="js/debug.js?v=81"></script>
-  <script src="js/sound.js?v=81"></script>
-  <script src="js/game.js?v=81"></script>
-  <script src="js/net.js?v=81"></script>
-  <script src="js/bot.js?v=81"></script>
+  <script src="js/colyseus.js?v=82"></script>
+  <script src="js/topology.js?v=82"></script>
+  <script src="js/board.js?v=82"></script>
+  <script src="js/engine.js?v=82"></script>
+  <script src="js/debug.js?v=82"></script>
+  <script src="js/sound.js?v=82"></script>
+  <script src="js/game.js?v=82"></script>
+  <script src="js/net.js?v=82"></script>
+  <script src="js/bot.js?v=82"></script>
 
 </body>
 </html>
