@@ -13,7 +13,7 @@ try {
 
 const MAX_SEATS = 4;
 const ROLL_MS = 1500;
-const RECONNECT_SEC = 30;
+const RECONNECT_SEC = 90;
 
 const fs = require("fs");
 const path = require("path");
@@ -120,6 +120,8 @@ class GameRoom extends Room {
     this._startTimer = null;
     this._emptyTimer = null;
     this._finishedTimer = null;
+    this._autoStartTimer = null;
+    this._botScheduled = false;
     this._roomCode = this.isPrivate ? generateCode() : null;
 
     this._roomName = options && options.roomName
@@ -213,6 +215,7 @@ class GameRoom extends Room {
 
   toWaiting() {
     if (this._startTimer) { this._startTimer.clear(); this._startTimer = null; }
+    if (this._autoStartTimer) { this._autoStartTimer.clear(); this._autoStartTimer = null; }
     this.state.roomPhase = "waiting";
     this.state.countdown = 0;
     this.removeBots();
@@ -225,6 +228,7 @@ class GameRoom extends Room {
   toStarting(force = false) {
     if (!force && this.roomPhase !== "waiting") return;
     if (this._emptyTimer) { this._emptyTimer.clear(); this._emptyTimer = null; }
+    if (this._autoStartTimer) { this._autoStartTimer.clear(); this._autoStartTimer = null; }
     this.state.roomPhase = "starting";
     if (this.fillBots) this.fillSeatsWithBots();
     this.lock();
@@ -252,6 +256,7 @@ class GameRoom extends Room {
     this.resetGame();
     serverLog(`room ${this.roomId} → playing`);
     this.sync();
+    this._scheduleBotTurn();
   }
 
   toFinished(winnerSeat) {
@@ -303,8 +308,21 @@ class GameRoom extends Room {
     }
 
     // зал полон → старт
-    if (this.roomPhase === "waiting" && humanCount >= this.maxClients) this.toStarting();
-    else this.sync();
+    if (this.roomPhase === "waiting" && humanCount >= this.maxClients) {
+      this.toStarting();
+    } else if (this.fillBots && this.roomPhase === "waiting" && humanCount >= this.minPlayers && !this._autoStartTimer) {
+      // автостарт: подождать немного, потом добить ботами
+      this._autoStartTimer = this.clock.setTimeout(() => {
+        this._autoStartTimer = null;
+        if (this.roomPhase === "waiting" && this.humansCount() >= this.minPlayers) {
+          serverLog(`room ${this.roomId} auto-start timeout (fill bots)`);
+          this.toStarting();
+        }
+      }, 60_000);
+      this.sync();
+    } else {
+      this.sync();
+    }
   }
 
   async onLeave(client, consented) {
@@ -347,6 +365,7 @@ class GameRoom extends Room {
         }
       }
       this.sync();
+      this._scheduleBotTurn();
     }
   }
 
@@ -486,7 +505,7 @@ class GameRoom extends Room {
     this._rollTimer = this.clock.setTimeout(() => {
       this._rollTimer = null;
       if (!this.hasAnyAction()) { this.endTurn(); }
-      else { this.phase = "move"; }
+      else { this.phase = "move"; this._scheduleBotTurn(); }
       this.sync();
     }, ROLL_MS);
   }
@@ -626,10 +645,12 @@ class GameRoom extends Room {
     this.turnDouble = false; this.turnCaptures = 0; this.expressJumps = 0;
     if (why.length) {
       serverLog(`seat${this.turn} EXTRA turn (${why.join('+')})`);
+      this._scheduleBotTurn();
       return;
     }
     this.advanceTurn();
     serverLog(`turn -> seat${this.turn}`);
+    this._scheduleBotTurn();
   }
 
   advanceTurn() {
@@ -684,6 +705,133 @@ class GameRoom extends Room {
     this.karzerHandled = false;
     this.bm = null; this.winner = -1; this.phase = "idle";
     this.turn = 0;
+    this._botScheduled = false;
+  }
+
+  _currentTurnPlayer() {
+    for (const [, p] of this.state.players) if (p.seat === this.turn) return p;
+    return null;
+  }
+
+  _scheduleBotTurn() {
+    if (this._botScheduled) return;
+    if (this.roomPhase !== "playing") return;
+    const p = this._currentTurnPlayer();
+    if (!p || !p.isBot) return;
+    this._botScheduled = true;
+    this.clock.setTimeout(() => {
+      this._botScheduled = false;
+      this._botTick();
+    }, 600 + Math.random() * 800);
+  }
+
+  _botTick() {
+    if (this.roomPhase !== "playing") return;
+    const p = this._currentTurnPlayer();
+    if (!p || !p.isBot) return;
+    if (this.phase === "idle") this._doBotRoll();
+    else if (this.phase === "move") this._doBotMove();
+  }
+
+  _doBotRoll() {
+    if (this.phase !== "idle") return;
+    const d1 = Math.ceil(Math.random() * 6);
+    const d2 = Math.ceil(Math.random() * 6);
+    this.dice = [d1, d2];
+    this.used = [false, false];
+    this.turnDouble = (d1 === d2);
+    this.doubleOne = (d1 === 1 && d1 === d2);
+    this.turnSix = (d1 === 6 || d2 === 6);
+    if (this.bonus[this.turn] > 0) {
+      this.bonusPhase = true;
+      this.dice = [6, ...this.dice];
+      this.used = [false, false, false];
+    }
+    this.rollCaptureChances = this.engine.captureChances(this.turn, this.dice, this.used, this.ctx());
+    if (this._rollTimer) { this._rollTimer.clear(); this._rollTimer = null; }
+    if (!this.hasAnyAction()) { this.endTurn(); }
+    else { this.phase = "move"; this._scheduleBotTurn(); }
+    this.sync();
+  }
+
+  _doBotMove() {
+    if (this.phase !== "move") return;
+    const E = this.engine;
+    const seat = this.turn;
+    const ctx = this.ctx();
+
+    // karzer (double 1-1)
+    if (this.karzerOffer()) {
+      this.karzerHandled = true;
+      E.karzerOnDoubleOne(seat);
+      this.used = this.used.map(() => true);
+      this.afterMove(); this.sync(); return;
+    }
+
+    // build list of legal actions
+    const legal = [];
+    for (let slot = 0; slot < this.dice.length; slot++) {
+      if (this.used[slot]) continue;
+      const die = this.dice[slot];
+      if (die === 6) {
+        for (let pi = 0; pi < 5; pi++) {
+          if (E.canRedeem(seat, pi)) legal.push({ slot, die, pi, kind: "redeem" });
+        }
+      }
+      const moveable = E.legalForDie(seat, die, ctx);
+      for (const pi of moveable) {
+        const p = E.pieces[seat][pi];
+        if (p.where === "prison") {
+          legal.push({ slot, die, pi, kind: "exit" });
+        } else {
+          if ((die === 1 || die === 3) && E.onExpress(seat, pi) >= 0) legal.push({ slot, die, pi, kind: "express" });
+          if (E.canMove(seat, pi, die, ctx)) legal.push({ slot, die, pi, kind: "move" });
+          if (slot === 0 && this.dice.length >= 2 && !this.used[1]) {
+            const sum = this.dice[0] + this.dice[1];
+            if (E.canMove(seat, pi, sum, ctx)) legal.push({ slot: -1, die: sum, pi, kind: "sum" });
+          }
+        }
+      }
+    }
+
+    if (!legal.length) { this.endTurn(); this.sync(); return; }
+    const act = legal[Math.floor(Math.random() * legal.length)];
+
+    if (act.kind === "redeem") {
+      const captor = E.redeem(seat, act.pi);
+      if (captor >= 0) this.bonus[captor] = (this.bonus[captor] || 0) + 1;
+      this.used[act.slot] = true;
+      serverLog(`BOT seat${seat} piece${act.pi} REDEEM`);
+    } else if (act.kind === "exit") {
+      E.applyDie(seat, act.pi, act.die);
+      this.used[act.slot] = true;
+      serverLog(`BOT seat${seat} piece${act.pi} EXIT`);
+    } else if (act.kind === "express") {
+      const res = E.expressJump(seat, act.pi, act.die);
+      this.turnCaptures += res.captured.length;
+      this.expressJumps++;
+      this.used[act.slot] = true;
+      serverLog(`BOT seat${seat} piece${act.pi} EXPRESS die${act.die}`);
+    } else if (act.kind === "sum") {
+      const res = E.applyDie(seat, act.pi, act.die);
+      this.turnCaptures += res.captured.length;
+      const offerBM = E.canOfferBM(seat, act.pi);
+      if (offerBM && Math.random() < 0.5) E.divertToBM(seat, act.pi);
+      this.used[0] = true; this.used[1] = true;
+      serverLog(`BOT seat${seat} piece${act.pi} SUM ${act.die}`);
+    } else {
+      const res = E.applyDie(seat, act.pi, act.die);
+      this.turnCaptures += res.captured.length;
+      const offerBM = E.canOfferBM(seat, act.pi);
+      if (offerBM && Math.random() < 0.5) E.divertToBM(seat, act.pi);
+      this.used[act.slot] = true;
+      serverLog(`BOT seat${seat} piece${act.pi} die${act.die}`);
+    }
+
+    this.afterMove();
+    this.sync();
+    // afterMove() calls endTurn() or keeps phase="move"; schedule next bot tick if still in move phase
+    if (this.phase === "move" && this._currentTurnPlayer()?.isBot) this._scheduleBotTurn();
   }
 
   freeSeat(seat) {

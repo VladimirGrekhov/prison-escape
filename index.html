@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Prison Escape</title>
-  <link rel="stylesheet" href="css/style.css?v=85">
+  <link rel="stylesheet" href="css/style.css?v=86">
 </head>
 <body>
 
@@ -56,6 +56,9 @@
     <div id="lobby-modal">
       <h2 id="lobby-title">🔒 Prison Escape</h2>
 
+      <!-- Кнопка быстрого поиска -->
+      <button id="lobby-play-btn">Играть</button>
+
       <!-- Фильтр по числу игроков -->
       <div id="lobby-filter-row">
         <span>Показать:</span>
@@ -81,6 +84,7 @@
             <option value="4" selected>4</option>
           </select>
           <span>игр.</span>
+          <label id="lobby-fillbots-label"><input type="checkbox" id="lobby-fillbots"> 🤖 Боты</label>
           <label id="lobby-private-label"><input type="checkbox" id="lobby-private"> 🔒 Приват</label>
           <button id="lobby-create-btn">+ Создать</button>
         </div>
@@ -229,15 +233,15 @@
     </div>
   </div>
 
-  <script src="js/colyseus.js?v=85"></script>
-  <script src="js/topology.js?v=85"></script>
-  <script src="js/board.js?v=85"></script>
-  <script src="js/engine.js?v=85"></script>
-  <script src="js/debug.js?v=85"></script>
-  <script src="js/sound.js?v=85"></script>
-  <script src="js/game.js?v=85"></script>
-  <script src="js/net.js?v=85"></script>
-  <script src="js/bot.js?v=85"></script>
+  <script src="js/colyseus.js?v=86"></script>
+  <script src="js/topology.js?v=86"></script>
+  <script src="js/board.js?v=86"></script>
+  <script src="js/engine.js?v=86"></script>
+  <script src="js/debug.js?v=86"></script>
+  <script src="js/sound.js?v=86"></script>
+  <script src="js/game.js?v=86"></script>
+  <script src="js/net.js?v=86"></script>
+  <script src="js/bot.js?v=86"></script>
 
 </body>
 </html>

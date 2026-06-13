@@ -164,12 +164,13 @@
 
   async function createRoom() {
     const maxPlayers = parseInt(document.getElementById('lobby-maxplayers')?.value || '4', 10);
+    const fillBots = !!(document.getElementById('lobby-fillbots')?.checked);
     const isPrivate = !!(document.getElementById('lobby-private')?.checked);
     try {
       const room = await MP._client.create('prison', {
         name: MP.myName(),
         maxPlayers,
-        fillBots: false,
+        fillBots,
         private: isPrivate,
       });
       closeLobbyOverlay();
@@ -177,6 +178,27 @@
       setStatus('online');
     } catch (e) {
       console.warn('[MP] createRoom failed:', e && e.message);
+    }
+  }
+
+  async function quickPlay() {
+    const candidates = Object.values(_rooms).filter((r) => {
+      const meta = r.metadata || {};
+      return !meta.private && meta.roomPhase === 'waiting' && meta.players < meta.maxPlayers;
+    });
+    if (candidates.length > 0) {
+      await joinRoom(candidates[0].roomId);
+    } else {
+      try {
+        const room = await MP._client.create('prison', {
+          name: MP.myName(), maxPlayers: 4, fillBots: false, private: false,
+        });
+        closeLobbyOverlay();
+        adopt(room);
+        setStatus('online');
+      } catch (e) {
+        console.warn('[MP] quickPlay create failed:', e && e.message);
+      }
     }
   }
 
@@ -394,14 +416,14 @@
     MP.connected = false;
     if (MP._leaving) return;
     setStatus('reconnecting');
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < 15; attempt++) {
       try {
         const room = await MP._client.reconnect(MP._token);
         adopt(room);
         setStatus('online');
         return;
       } catch (e) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await new Promise((r) => setTimeout(r, 6000));
       }
     }
     goOffline();
@@ -421,6 +443,7 @@
   // ── setup DOM buttons ─────────────────────────────────────────────────────
 
   function initLobbyButtons() {
+    document.getElementById('lobby-play-btn')?.addEventListener('click', quickPlay);
     document.getElementById('lobby-create-btn')?.addEventListener('click', createRoom);
     document.getElementById('lobby-offline-btn')?.addEventListener('click', () => {
       closeLobbyOverlay();
